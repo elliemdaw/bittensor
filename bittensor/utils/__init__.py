@@ -4,7 +4,7 @@ import hashlib
 import inspect
 import warnings
 from collections import namedtuple
-from typing import Any, Literal, Union, Optional, TYPE_CHECKING
+from typing import Any, Literal, Union, Optional, Type, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import scalecodec
@@ -41,6 +41,14 @@ U64_MAX = 18446744073709551615
 GLOBAL_MAX_SUBNET_COUNT = 4096
 
 UnlockStatus = namedtuple("UnlockStatus", ["success", "message"])
+
+
+class ChainFeatureDisabledWarning(UserWarning):
+    """Warning indicating that a feature is currently disabled on the chain side.
+
+    This warning is issued when SDK functionality depends on chain feats that are temporarily unavailable or disabled.
+    """
+
 
 # redundant aliases
 logging = logging
@@ -140,7 +148,7 @@ def strtobool(val: str) -> Union[bool, Literal["==SUPRESS=="]]:
 
 def _get_explorer_root_url_by_network_from_map(
     network: str, network_map: dict[str, dict[str, str]]
-) -> Optional[dict[str, str]]:
+) -> dict[str, str]:
     """
     Returns the explorer root url for the given network name from the given network map.
 
@@ -151,7 +159,7 @@ def _get_explorer_root_url_by_network_from_map(
     Returns:
         The explorer url for the given network. Or None if the network is not in the network map.
     """
-    explorer_urls: Optional[dict[str, str]] = {}
+    explorer_urls: dict[str, str] = {}
     for entity_nm, entity_network_map in network_map.items():
         if network in entity_network_map:
             explorer_urls[entity_nm] = entity_network_map[network]
@@ -161,7 +169,7 @@ def _get_explorer_root_url_by_network_from_map(
 
 def get_explorer_url_for_network(
     network: str, block_hash: str, network_map: dict[str, dict[str, str]]
-) -> Optional[dict[str, str]]:
+) -> dict[str, str]:
     """
     Returns the explorer url for the given block hash and network.
 
@@ -174,10 +182,10 @@ def get_explorer_url_for_network(
         The explorer url for the given block hash and network. Or None if the network is not known.
     """
 
-    explorer_urls: Optional[dict[str, str]] = {}
-    # Will be None if the network is not known. i.e. not in network_map
-    explorer_root_urls: Optional[dict[str, str]] = (
-        _get_explorer_root_url_by_network_from_map(network, network_map)
+    explorer_urls: dict[str, str] = {}
+
+    explorer_root_urls: dict[str, str] = _get_explorer_root_url_by_network_from_map(
+        network, network_map
     )
 
     if explorer_root_urls != {}:
@@ -480,10 +488,29 @@ def determine_chain_endpoint_and_network(
     return "unknown", network
 
 
-def deprecated_message(message: str) -> None:
-    """Shows a deprecation warning message with the given message."""
-    warnings.simplefilter("default", DeprecationWarning)
-    warnings.warn(message=message, category=DeprecationWarning, stacklevel=2)
+def deprecated_message(
+    message: Optional[str] = None,
+    replacement_message: Optional[str] = None,
+    category: Type[Warning] = DeprecationWarning,
+    stacklevel: int = 2,
+) -> None:
+    """Shows a warning message with the given message.
+
+    Parameters:
+        message: The warning message to display. If None, a default deprecation message is generated.
+        replacement_message: An optional additional message suggesting a replacement.
+        category: The warning category to use. Defaults to DeprecationWarning.
+        stacklevel: The stack level for the warning. Defaults to 2 (points to the caller of deprecated_message).
+            Increase this value if deprecated_message is called from within another wrapper function.
+    """
+    message = (
+        message
+        if message
+        else f"The called object ({get_caller_name()}) is deprecated and will be removed in a future release."
+    )
+    message = f"{message} {replacement_message}" if replacement_message else message
+    warnings.simplefilter("default", category)
+    warnings.warn(message=message, category=category, stacklevel=stacklevel)
 
 
 def get_function_name() -> str:
