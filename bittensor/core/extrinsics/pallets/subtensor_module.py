@@ -1,9 +1,11 @@
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from bittensor.core.types import UIDs, Weights, Salt
-from bittensor.utils import Certificate
-from .base import CallBuilder as _BasePallet, Call
+from bittensor.core.types import Salt, UIDs, Weights
+from bittensor.utils import Certificate, deprecated_message
+
+from .base import Call
+from .base import CallBuilder as _BasePallet
 
 
 @dataclass
@@ -47,6 +49,31 @@ class SubtensorModule(_BasePallet):
             amount_staked=amount_staked,
         )
 
+    def add_stake_burn(
+        self,
+        netuid: int,
+        hotkey: str,
+        amount: int,
+        limit: Optional[int] = None,
+    ) -> Call:
+        """Returns GenericCall instance for Subtensor function SubtensorModule.add_stake_burn.
+
+        Parameters:
+            netuid: The netuid of the subnet to buy back on.
+            hotkey: The hotkey SS58 address associated with the buyback.
+            amount: Amount of TAO in RAO to use for the buyback.
+            limit: Optional limit price expressed in units of RAO per one Alpha.
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(
+            netuid=netuid,
+            hotkey=hotkey,
+            amount=amount,
+            limit=limit,
+        )
+
     def add_stake_limit(
         self,
         netuid: int,
@@ -74,6 +101,20 @@ class SubtensorModule(_BasePallet):
             limit_price=limit_price,
             allow_partial=allow_partial,
         )
+
+    def announce_coldkey_swap(
+        self,
+        new_coldkey_hash: str,
+    ) -> Call:
+        """Returns GenericCall instance for Subtensor function SubtensorModule.announce_coldkey_swap.
+
+        Parameters:
+            new_coldkey_hash: The BlakeTwo256 hash of the new coldkey AccountId (hex string with 0x prefix).
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(new_coldkey_hash=new_coldkey_hash)
 
     def burned_register(
         self,
@@ -174,6 +215,47 @@ class SubtensorModule(_BasePallet):
         """
         return self.create_composed_call(hotkey=hotkey, take=take)
 
+    def lock_stake(
+        self,
+        hotkey: str,
+        netuid: int,
+        amount: int,
+    ) -> Call:
+        """Returns GenericCall instance for Subtensor function SubtensorModule.lock_stake.
+
+        Parameters:
+            hotkey: The hotkey SS58 address to lock stake on.
+            netuid: The subnet UID on which to lock.
+            amount: Amount of alpha in RAO to lock.
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(
+            hotkey=hotkey,
+            netuid=netuid,
+            amount=amount,
+        )
+
+    def move_lock(
+        self,
+        destination_hotkey: str,
+        netuid: int,
+    ) -> Call:
+        """Returns GenericCall instance for Subtensor function SubtensorModule.move_lock.
+
+        Parameters:
+            destination_hotkey: The SS58 address of the hotkey to move the lock to.
+            netuid: The subnet UID on which the lock exists.
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(
+            destination_hotkey=destination_hotkey,
+            netuid=netuid,
+        )
+
     def move_stake(
         self,
         origin_netuid: int,
@@ -202,35 +284,25 @@ class SubtensorModule(_BasePallet):
             alpha_amount=alpha_amount,
         )
 
-    def register(
+    def register_limit(
         self,
         netuid: int,
-        coldkey: str,
         hotkey: str,
-        block_number: int,
-        nonce: int,
-        work: list[int],
+        limit_price: int,
     ) -> Call:
-        """Returns GenericCall instance for Subtensor function SubtensorModule.register.
+        """Returns GenericCall instance for Subtensor function SubtensorModule.register_limit.
 
         Parameters:
             netuid: The netuid of the subnet to register on.
-            coldkey: The coldkey SS58 address associated with the neuron.
             hotkey: The hotkey SS58 address associated with the neuron.
-            block_number: POW block number.
-            nonce: POW nonce.
-            work: List representation of POW seal.
+            limit_price: Maximum acceptable burn price in RAO. If on-chain burn exceeds this,
+                the transaction fails with RegistrationPriceLimitExceeded.
 
         Returns:
             GenericCall instance.
         """
         return self.create_composed_call(
-            netuid=netuid,
-            coldkey=coldkey,
-            hotkey=hotkey,
-            block_number=block_number,
-            nonce=nonce,
-            work=work,
+            netuid=netuid, hotkey=hotkey, limit_price=limit_price
         )
 
     def register_network(self, hotkey: str) -> Call:
@@ -312,6 +384,88 @@ class SubtensorModule(_BasePallet):
         """
         return self.create_composed_call(
             netuid=netuid, hotkey=hotkey, limit_price=limit_price
+        )
+
+    def dispute_coldkey_swap(self) -> Call:
+        """Returns GenericCall instance for Subtensor function SubtensorModule.dispute_coldkey_swap.
+
+        Callable by the coldkey that has an active swap announcement. Marks the swap as disputed;
+        the account is blocked until root calls reset_coldkey_swap.
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call()
+
+    def clear_coldkey_swap_announcement(self) -> Call:
+        """Returns GenericCall instance for Subtensor function SubtensorModule.clear_coldkey_swap_announcement.
+
+        Callable by the coldkey that has an active swap announcement. Withdraws the announcement
+        after the reannouncement delay has elapsed past the execution block.
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call()
+
+    def reset_coldkey_swap(self, coldkey: str) -> Call:
+        """Returns GenericCall instance for Subtensor function SubtensorModule.reset_coldkey_swap.
+
+        Only callable by root. Clears the coldkey swap announcement and dispute for the given coldkey.
+
+        Parameters:
+            coldkey: SS58 address of the coldkey to reset the swap for.
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(coldkey=coldkey)
+
+    def swap_coldkey(
+        self,
+        old_coldkey: str,
+        new_coldkey: str,
+        swap_cost: int,
+    ) -> Call:
+        """Returns GenericCall instance for Subtensor function SubtensorModule.swap_coldkey.
+
+        Only callable by root. Performs a coldkey swap without an announcement; swap_cost is charged
+        from old_coldkey in RAO.
+
+        Parameters:
+            old_coldkey: SS58 address of the coldkey to swap from.
+            new_coldkey: SS58 address of the coldkey to swap to.
+            swap_cost: Cost in RAO charged from old_coldkey (use 0 for no charge).
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(
+            old_coldkey=old_coldkey,
+            new_coldkey=new_coldkey,
+            swap_cost=swap_cost,
+        )
+
+    def remove_coldkey_swap_announcement(
+        self,
+        coldkey: str,
+    ) -> Call:
+        """Returns GenericCall that resets coldkey swap for the given coldkey (root only).
+
+        Deprecated. Use :meth:`reset_coldkey_swap` instead. This shim exists for compatibility;
+        the runtime call is SubtensorModule.reset_coldkey_swap, which clears both announcement
+        and dispute.
+
+        Parameters:
+            coldkey: SS58 address of the coldkey to reset the swap for.
+
+        Returns:
+            GenericCall instance.
+        """
+        # TODO: remove this logic in the next major release (include all references)
+        deprecated_message()
+        return self.create_composed_call(
+            call_function="reset_coldkey_swap", coldkey=coldkey
         )
 
     def reveal_mechanism_weights(
@@ -509,6 +663,25 @@ class SubtensorModule(_BasePallet):
         """
         return self.create_composed_call(cooldown=cooldown)
 
+    def set_perpetual_lock(
+        self,
+        netuid: int,
+        enabled: bool,
+    ) -> Call:
+        """Returns GenericCall instance for Subtensor function SubtensorModule.set_perpetual_lock.
+
+        Parameters:
+            netuid: The subnet UID for which to set the perpetual lock flag.
+            enabled: If True, the lock will not decay. If False, normal decay resumes.
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(
+            netuid=netuid,
+            enabled=enabled,
+        )
+
     def set_root_claim_type(
         self,
         new_root_claim_type: Literal["Swap", "Keep"] | dict,
@@ -633,6 +806,21 @@ class SubtensorModule(_BasePallet):
             allow_partial=allow_partial,
         )
 
+    def swap_coldkey_announced(
+        self,
+        new_coldkey: str,
+    ) -> Call:
+        """Returns GenericCall instance for Subtensor function SubtensorModule.swap_coldkey_announced.
+
+        Parameters:
+            new_coldkey: SS58 address of the new coldkey to swap to. The BlakeTwo256 hash of this coldkey must match
+                the hash that was announced.
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(new_coldkey=new_coldkey)
+
     def transfer_stake(
         self,
         destination_coldkey: str,
@@ -660,3 +848,38 @@ class SubtensorModule(_BasePallet):
             destination_netuid=destination_netuid,
             alpha_amount=alpha_amount,
         )
+
+    def set_tempo(self, netuid: int, tempo: int) -> Call:
+        """Returns GenericCall instance for SubtensorModule.set_tempo.
+
+        Parameters:
+            netuid: The unique identifier of the subnet.
+            tempo: New tempo value (blocks per epoch).
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(netuid=netuid, tempo=tempo)
+
+    def set_activity_cutoff_factor(self, netuid: int, factor_milli: int) -> Call:
+        """Returns GenericCall instance for SubtensorModule.set_activity_cutoff_factor.
+
+        Parameters:
+            netuid: The unique identifier of the subnet.
+            factor_milli: Activity cutoff factor in per-mille units.
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(netuid=netuid, factor_milli=factor_milli)
+
+    def trigger_epoch(self, netuid: int) -> Call:
+        """Returns GenericCall instance for SubtensorModule.trigger_epoch.
+
+        Parameters:
+            netuid: The unique identifier of the subnet.
+
+        Returns:
+            GenericCall instance.
+        """
+        return self.create_composed_call(netuid=netuid)

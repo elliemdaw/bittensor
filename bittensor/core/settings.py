@@ -3,8 +3,6 @@ import os
 import re
 from pathlib import Path
 
-from munch import munchify
-
 ROOT_TAO_STAKE_WEIGHT = 0.18
 
 READ_ONLY = os.getenv("READ_ONLY") == "1"
@@ -70,6 +68,10 @@ SS58_ADDRESS_LENGTH = 48
 # details https://paritytech.github.io/polkadot-sdk/master/src/sp_runtime/generic/era.rs.html#65-72
 DEFAULT_PERIOD = 128
 
+# Maximum period (in blocks) for MEV Shield-protected extrinsics Era.
+# This keeps encrypted submissions short-lived in the mempool.
+MAX_MEV_SHIELD_PERIOD = 8
+
 # Default MEV Shield protection setting for extrinsics.
 # When enabled, transactions are encrypted to protect against Miner Extractable Value (MEV) attacks.
 DEFAULT_MEV_PROTECTION = os.getenv("BT_MEV_PROTECTION", "").lower() in (
@@ -110,50 +112,46 @@ _BT_AXON_MAX_WORKERS = os.getenv("BT_AXON_MAX_WORKERS")
 _BT_PRIORITY_MAX_WORKERS = os.getenv("BT_PRIORITY_MAX_WORKERS")
 _BT_PRIORITY_MAXSIZE = os.getenv("BT_PRIORITY_MAXSIZE")
 
-DEFAULTS = munchify(
-    {
-        "axon": {
-            "port": int(_BT_AXON_PORT) if _BT_AXON_PORT else 8091,
-            "ip": os.getenv("BT_AXON_IP") or "[::]",
-            "external_port": os.getenv("BT_AXON_EXTERNAL_PORT") or None,
-            "external_ip": os.getenv("BT_AXON_EXTERNAL_IP") or None,
-            "max_workers": int(_BT_AXON_MAX_WORKERS) if _BT_AXON_MAX_WORKERS else 10,
-        },
-        "logging": {
-            "debug": bool(os.getenv("BT_LOGGING_DEBUG")) or False,
-            "trace": bool(os.getenv("BT_LOGGING_TRACE")) or False,
-            "info": bool(os.getenv("BT_LOGGING_INFO")) or False,
-            "record_log": bool(os.getenv("BT_LOGGING_RECORD_LOG")) or False,
-            "logging_dir": None
+
+class DEFAULTS:
+    config = False
+    strict = False
+    no_version_checking = False
+
+    class axon:
+        port = int(_BT_AXON_PORT) if _BT_AXON_PORT else 8091
+        ip = os.getenv("BT_AXON_IP") or "[::]"
+        external_port = os.getenv("BT_AXON_EXTERNAL_PORT") or None
+        external_ip = os.getenv("BT_AXON_EXTERNAL_IP") or None
+        max_workers = int(_BT_AXON_MAX_WORKERS) if _BT_AXON_MAX_WORKERS else 10
+
+    class logging:
+        debug = bool(os.getenv("BT_LOGGING_DEBUG")) or False
+        trace = bool(os.getenv("BT_LOGGING_TRACE")) or False
+        info = bool(os.getenv("BT_LOGGING_INFO")) or False
+        record_log = bool(os.getenv("BT_LOGGING_RECORD_LOG")) or False
+        logging_dir = (
+            None
             if READ_ONLY
-            else os.getenv("BT_LOGGING_LOGGING_DIR") or str(MINERS_DIR),
-            "enable_third_party_loggers": os.getenv(
-                "BT_LOGGING_ENABLE_THIRD_PARTY_LOGGERS"
-            )
-            or False,
-        },
-        "priority": {
-            "max_workers": int(_BT_PRIORITY_MAX_WORKERS)
-            if _BT_PRIORITY_MAX_WORKERS
-            else 5,
-            "maxsize": int(_BT_PRIORITY_MAXSIZE) if _BT_PRIORITY_MAXSIZE else 10,
-        },
-        "subtensor": {
-            "chain_endpoint": os.getenv("BT_SUBTENSOR_CHAIN_ENDPOINT")
-            or DEFAULT_ENDPOINT,
-            "network": os.getenv("BT_SUBTENSOR_NETWORK") or DEFAULT_NETWORK,
-            "_mock": False,
-        },
-        "wallet": {
-            "name": os.getenv("BT_WALLET_NAME") or "default",
-            "hotkey": os.getenv("BT_WALLET_HOTKEY") or "default",
-            "path": os.getenv("BT_WALLET_PATH") or str(WALLETS_DIR),
-        },
-        "config": False,
-        "strict": False,
-        "no_version_checking": False,
-    }
-)
+            else os.getenv("BT_LOGGING_LOGGING_DIR") or str(MINERS_DIR)
+        )
+        enable_third_party_loggers = (
+            os.getenv("BT_LOGGING_ENABLE_THIRD_PARTY_LOGGERS") or False
+        )
+
+    class priority:
+        max_workers = int(_BT_PRIORITY_MAX_WORKERS) if _BT_PRIORITY_MAX_WORKERS else 5
+        maxsize = int(_BT_PRIORITY_MAXSIZE) if _BT_PRIORITY_MAXSIZE else 10
+
+    class subtensor:
+        chain_endpoint = os.getenv("BT_SUBTENSOR_CHAIN_ENDPOINT") or DEFAULT_ENDPOINT
+        network = os.getenv("BT_SUBTENSOR_NETWORK") or DEFAULT_NETWORK
+        _mock = False
+
+    class wallet:
+        name = os.getenv("BT_WALLET_NAME") or "default"
+        hotkey = os.getenv("BT_WALLET_HOTKEY") or "default"
+        path = os.getenv("BT_WALLET_PATH") or str(WALLETS_DIR)
 
 
 # Parsing version without any literals.
@@ -168,3 +166,13 @@ version_as_int: int = sum(
     e * (_version_int_base**i) for i, e in enumerate(reversed(_version_info))
 )
 assert version_as_int < 2**31  # fits in int32
+
+
+# used for backwards compatibility in config.py and loggingmachine.py
+def no_parse_cli():
+    return not os.getenv("BT_NO_PARSE_CLI_ARGS", "true").lower() in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )

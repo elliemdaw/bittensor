@@ -1,6 +1,7 @@
 import os.path
 import shutil
 import time
+from dataclasses import replace
 import numpy as np
 import pytest
 
@@ -12,8 +13,7 @@ from bittensor.extras.dev_framework import (
 )
 from bittensor.utils.balance import Balance
 from bittensor.utils.btlogging import logging
-from bittensor.utils.registration.pow import LazyLoadedTorch
-from bittensor.utils.weight_utils import convert_and_normalize_weights_and_uids
+from bittensor.utils.registration.torch_utils import LazyLoadedTorch
 from tests.e2e_tests.utils import (
     AdminUtils,
     NETUID,
@@ -25,6 +25,12 @@ from tests.e2e_tests.utils import (
 )
 
 NULL_KEY = tuple(bytearray(32))
+
+
+def _strip_unique_fields_for_metagraph_parity(m: MetagraphInfo) -> MetagraphInfo:
+    # get_metagraph_info (selective mechagraph) contains validators/commitments;
+    # get_all_metagraphs_info does not get these fields from the chain.
+    return replace(m, validators=None, commitments=None)
 
 
 torch = LazyLoadedTorch()
@@ -608,6 +614,12 @@ def test_metagraph_info(subtensor, alice_wallet, bob_wallet):
 
     metagraph_info = subtensor.metagraphs.get_metagraph_info(netuid=1, block=1)
 
+    expected_activity_cutoff = max(
+        1,
+        subtensor.subnets.get_activity_cutoff_factor_milli(1)
+        * 100  # tempo
+        // 1000,
+    )
     expected_metagraph_info = MetagraphInfo(
         netuid=1,
         mechid=0,
@@ -638,7 +650,7 @@ def test_metagraph_info(subtensor, alice_wallet, bob_wallet):
         max_weights_limit=1.0,
         weights_version=0,
         weights_rate_limit=100,
-        activity_cutoff=5000,
+        activity_cutoff=expected_activity_cutoff,
         max_validators=64,
         num_uids=1,
         max_uids=256,
@@ -665,7 +677,7 @@ def test_metagraph_info(subtensor, alice_wallet, bob_wallet):
         hotkeys=["5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM"],
         coldkeys=["5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM"],
         identities=[None],
-        axons=(
+        axons=[
             {
                 "block": 0,
                 "version": 0,
@@ -676,18 +688,18 @@ def test_metagraph_info(subtensor, alice_wallet, bob_wallet):
                 "placeholder1": 0,
                 "placeholder2": 0,
             },
-        ),
-        active=(True,),
-        validator_permit=(False,),
-        pruning_score=[0.0],
-        last_update=(0,),
+        ],
+        active=[True],
+        validator_permit=[False],
+        pruning_score=[],
+        last_update=[0],
         emission=[Balance(0).set_unit(1)],
         dividends=[0.0],
         incentives=[0.0],
         consensus=[0.0],
-        trust=[0.0],
-        rank=[0.0],
-        block_at_registration=(0,),
+        trust=[],
+        rank=[],
+        block_at_registration=[0],
         alpha_stake=[Balance.from_tao(1.0).set_unit(1)],
         tao_stake=[Balance(0)],
         total_stake=[Balance.from_tao(1.0).set_unit(1)],
@@ -705,6 +717,12 @@ def test_metagraph_info(subtensor, alice_wallet, bob_wallet):
 
     metagraph_infos = subtensor.metagraphs.get_all_metagraphs_info(block=1)
 
+    root_activity_cutoff = max(
+        1,
+        subtensor.subnets.get_activity_cutoff_factor_milli(0)
+        * 100  # tempo
+        // 1000,
+    )
     expected_metagraph_infos = [
         MetagraphInfo(
             netuid=0,
@@ -736,7 +754,7 @@ def test_metagraph_info(subtensor, alice_wallet, bob_wallet):
             max_weights_limit=1.0,
             weights_version=0,
             weights_rate_limit=100,
-            activity_cutoff=5000,
+            activity_cutoff=root_activity_cutoff,
             max_validators=64,
             num_uids=0,
             max_uids=64,
@@ -762,19 +780,19 @@ def test_metagraph_info(subtensor, alice_wallet, bob_wallet):
             bonds_moving_avg=4.87890977618477e-14,
             hotkeys=[],
             coldkeys=[],
-            identities={},
-            axons=(),
-            active=(),
-            validator_permit=(),
+            identities=[],
+            axons=[],
+            active=[],
+            validator_permit=[],
             pruning_score=[],
-            last_update=(),
+            last_update=[],
             emission=[],
             dividends=[],
             incentives=[],
             consensus=[],
             trust=[],
             rank=[],
-            block_at_registration=(),
+            block_at_registration=[],
             alpha_stake=[],
             tao_stake=[],
             total_stake=[],
@@ -833,7 +851,9 @@ def test_metagraph_info(subtensor, alice_wallet, bob_wallet):
     metagraph_infos = subtensor.metagraphs.get_all_metagraphs_info(block=block)
 
     assert len(metagraph_infos) == 4
-    assert metagraph_infos[-1] == metagraph_info
+    assert metagraph_infos[-1] == _strip_unique_fields_for_metagraph_parity(
+        metagraph_info
+    )
 
     # non-existed subnet
     metagraph_info = subtensor.metagraphs.get_metagraph_info(netuid=bob_sn.netuid + 1)
@@ -857,6 +877,12 @@ async def test_metagraph_info_async(async_subtensor, alice_wallet, bob_wallet):
         netuid=1, block=1
     )
 
+    expected_activity_cutoff = max(
+        1,
+        await async_subtensor.subnets.get_activity_cutoff_factor_milli(1)
+        * 100  # tempo
+        // 1000,
+    )
     expected_metagraph_info = MetagraphInfo(
         netuid=1,
         mechid=0,
@@ -887,7 +913,7 @@ async def test_metagraph_info_async(async_subtensor, alice_wallet, bob_wallet):
         max_weights_limit=1.0,
         weights_version=0,
         weights_rate_limit=100,
-        activity_cutoff=5000,
+        activity_cutoff=expected_activity_cutoff,
         max_validators=64,
         num_uids=1,
         max_uids=256,
@@ -914,7 +940,7 @@ async def test_metagraph_info_async(async_subtensor, alice_wallet, bob_wallet):
         hotkeys=["5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM"],
         coldkeys=["5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM"],
         identities=[None],
-        axons=(
+        axons=[
             {
                 "block": 0,
                 "version": 0,
@@ -925,18 +951,18 @@ async def test_metagraph_info_async(async_subtensor, alice_wallet, bob_wallet):
                 "placeholder1": 0,
                 "placeholder2": 0,
             },
-        ),
-        active=(True,),
-        validator_permit=(False,),
-        pruning_score=[0.0],
-        last_update=(0,),
+        ],
+        active=[True],
+        validator_permit=[False],
+        pruning_score=[],
+        last_update=[0],
         emission=[Balance(0).set_unit(1)],
         dividends=[0.0],
         incentives=[0.0],
         consensus=[0.0],
-        trust=[0.0],
-        rank=[0.0],
-        block_at_registration=(0,),
+        trust=[],
+        rank=[],
+        block_at_registration=[0],
         alpha_stake=[Balance.from_tao(1.0).set_unit(1)],
         tao_stake=[Balance(0)],
         total_stake=[Balance.from_tao(1.0).set_unit(1)],
@@ -954,6 +980,12 @@ async def test_metagraph_info_async(async_subtensor, alice_wallet, bob_wallet):
 
     metagraph_infos = await async_subtensor.metagraphs.get_all_metagraphs_info(block=1)
 
+    root_activity_cutoff = max(
+        1,
+        await async_subtensor.subnets.get_activity_cutoff_factor_milli(0)
+        * 100  # tempo
+        // 1000,
+    )
     expected_metagraph_infos = [
         MetagraphInfo(
             netuid=0,
@@ -985,7 +1017,7 @@ async def test_metagraph_info_async(async_subtensor, alice_wallet, bob_wallet):
             max_weights_limit=1.0,
             weights_version=0,
             weights_rate_limit=100,
-            activity_cutoff=5000,
+            activity_cutoff=root_activity_cutoff,
             max_validators=64,
             num_uids=0,
             max_uids=64,
@@ -1011,19 +1043,19 @@ async def test_metagraph_info_async(async_subtensor, alice_wallet, bob_wallet):
             bonds_moving_avg=4.87890977618477e-14,
             hotkeys=[],
             coldkeys=[],
-            identities={},
-            axons=(),
-            active=(),
-            validator_permit=(),
+            identities=[],
+            axons=[],
+            active=[],
+            validator_permit=[],
             pruning_score=[],
-            last_update=(),
+            last_update=[],
             emission=[],
             dividends=[],
             incentives=[],
             consensus=[],
             trust=[],
             rank=[],
-            block_at_registration=(),
+            block_at_registration=[],
             alpha_stake=[],
             tao_stake=[],
             total_stake=[],
@@ -1088,7 +1120,9 @@ async def test_metagraph_info_async(async_subtensor, alice_wallet, bob_wallet):
     )
 
     assert len(metagraph_infos) == 4
-    assert metagraph_infos[-1] == metagraph_info
+    assert metagraph_infos[-1] == _strip_unique_fields_for_metagraph_parity(
+        metagraph_info
+    )
 
     # non-existed subnet
     metagraph_info = await async_subtensor.metagraphs.get_metagraph_info(
@@ -1127,8 +1161,8 @@ def test_metagraph_info_with_indexes(subtensor, alice_wallet, bob_wallet):
         name="omron",
         owner_hotkey=alice_wallet.hotkey.ss58_address,
         owner_coldkey=alice_wallet.coldkey.ss58_address,
-        active=(True,),
-        axons=(
+        active=[True],
+        axons=[
             {
                 "block": 0,
                 "ip": 0,
@@ -1139,7 +1173,7 @@ def test_metagraph_info_with_indexes(subtensor, alice_wallet, bob_wallet):
                 "protocol": 0,
                 "version": 0,
             },
-        ),
+        ],
         symbol=None,
         identity=None,
         network_registered_at=None,
@@ -1230,8 +1264,8 @@ def test_metagraph_info_with_indexes(subtensor, alice_wallet, bob_wallet):
         name="omron",
         owner_hotkey=alice_wallet.hotkey.ss58_address,
         owner_coldkey=alice_wallet.coldkey.ss58_address,
-        active=(True, True),
-        axons=(
+        active=[True, True],
+        axons=[
             {
                 "block": 0,
                 "ip": 0,
@@ -1252,7 +1286,7 @@ def test_metagraph_info_with_indexes(subtensor, alice_wallet, bob_wallet):
                 "protocol": 0,
                 "version": 0,
             },
-        ),
+        ],
         symbol=None,
         identity=None,
         network_registered_at=None,
@@ -1356,8 +1390,8 @@ async def test_metagraph_info_with_indexes_async(
         name="omron",
         owner_hotkey=alice_wallet.hotkey.ss58_address,
         owner_coldkey=alice_wallet.coldkey.ss58_address,
-        active=(True,),
-        axons=(
+        active=[True],
+        axons=[
             {
                 "block": 0,
                 "ip": 0,
@@ -1368,7 +1402,7 @@ async def test_metagraph_info_with_indexes_async(
                 "protocol": 0,
                 "version": 0,
             },
-        ),
+        ],
         symbol=None,
         identity=None,
         network_registered_at=None,
@@ -1461,8 +1495,8 @@ async def test_metagraph_info_with_indexes_async(
         name="omron",
         owner_hotkey=alice_wallet.hotkey.ss58_address,
         owner_coldkey=alice_wallet.coldkey.ss58_address,
-        active=(True, True),
-        axons=(
+        active=[True, True],
+        axons=[
             {
                 "block": 0,
                 "ip": 0,
@@ -1483,7 +1517,7 @@ async def test_metagraph_info_with_indexes_async(
                 "protocol": 0,
                 "version": 0,
             },
-        ),
+        ],
         symbol=None,
         identity=None,
         network_registered_at=None,
