@@ -15,13 +15,14 @@ from tests.e2e_tests.utils import (
     NETUID,
     SUDO_SET_ADMIN_FREEZE_WINDOW,
     SUDO_SET_TEMPO,
+    SUDO_SET_MAX_ALLOWED_UIDS,
     SUDO_SET_MECHANISM_COUNT,
     SUDO_SET_COMMIT_REVEAL_WEIGHTS_ENABLED,
     SUDO_SET_WEIGHTS_SET_RATE_LIMIT,
     AdminUtils,
 )
 
-TESTED_SUB_SUBNETS = 2
+TESTED_MECHANISMS = 2
 
 
 def test_commit_and_reveal_weights_legacy(subtensor, alice_wallet):
@@ -44,8 +45,11 @@ def test_commit_and_reveal_weights_legacy(subtensor, alice_wallet):
     steps = [
         SUDO_SET_ADMIN_FREEZE_WINDOW(alice_wallet, AdminUtils, True, 0),
         REGISTER_SUBNET(alice_wallet),
+        SUDO_SET_MAX_ALLOWED_UIDS(
+            alice_wallet, AdminUtils, True, NETUID, int(256 / TESTED_MECHANISMS)
+        ),
         SUDO_SET_MECHANISM_COUNT(
-            alice_wallet, AdminUtils, True, NETUID, TESTED_SUB_SUBNETS
+            alice_wallet, AdminUtils, True, NETUID, TESTED_MECHANISMS
         ),
         ACTIVATE_SUBNET(alice_wallet),
         SUDO_SET_TEMPO(alice_wallet, AdminUtils, True, NETUID, TEMPO_TO_SET),
@@ -77,7 +81,7 @@ def test_commit_and_reveal_weights_legacy(subtensor, alice_wallet):
     assert response.success, response.message
     assert subtensor.subnets.weights_rate_limit(netuid=alice_sn.netuid) == 0
 
-    for mechid in range(TESTED_SUB_SUBNETS):
+    for mechid in range(TESTED_MECHANISMS):
         logging.console.info(
             f"[magenta]Testing subnet mechanism {alice_sn.netuid}.{mechid}[/magenta]"
         )
@@ -174,7 +178,7 @@ async def test_commit_and_reveal_weights_legacy_async(async_subtensor, alice_wal
         SUDO_SET_ADMIN_FREEZE_WINDOW(alice_wallet, AdminUtils, True, 0),
         REGISTER_SUBNET(alice_wallet),
         SUDO_SET_MECHANISM_COUNT(
-            alice_wallet, AdminUtils, True, NETUID, TESTED_SUB_SUBNETS
+            alice_wallet, AdminUtils, True, NETUID, TESTED_MECHANISMS
         ),
         ACTIVATE_SUBNET(alice_wallet),
         SUDO_SET_TEMPO(alice_wallet, AdminUtils, True, NETUID, TEMPO_TO_SET),
@@ -240,6 +244,11 @@ async def test_commit_and_reveal_weights_legacy_async(async_subtensor, alice_wal
         await async_subtensor.subnets.get_subnet_reveal_period_epochs(alice_sn.netuid)
         > 0
     ), "Invalid RevealPeriodEpochs"
+
+    # Wait until the reveal block range
+    await async_subtensor.wait_for_block(
+        await async_subtensor.subnets.get_next_epoch_start_block(alice_sn.netuid) + 1
+    )
 
     # Reveal weights
     success, message = await async_subtensor.extrinsics.reveal_weights(
@@ -429,6 +438,9 @@ async def test_commit_weights_uses_next_nonce_async(async_subtensor, alice_walle
     steps = [
         SUDO_SET_ADMIN_FREEZE_WINDOW(alice_wallet, AdminUtils, True, 0),
         REGISTER_SUBNET(alice_wallet),
+        SUDO_SET_MAX_ALLOWED_UIDS(
+            alice_wallet, AdminUtils, True, NETUID, int(256 / TESTED_MECHANISMS)
+        ),
         ACTIVATE_SUBNET(alice_wallet),
         SUDO_SET_TEMPO(alice_wallet, AdminUtils, True, NETUID, TEMPO_TO_SET),
         SUDO_SET_COMMIT_REVEAL_WEIGHTS_ENABLED(

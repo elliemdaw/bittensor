@@ -5,6 +5,7 @@ from typing import Any, Literal, Optional, TypedDict, Union, TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
+from scalecodec.utils.math import FixedPoint
 
 from bittensor.core import settings
 from bittensor.core.chain_data import NeuronInfo, NeuronInfoLite
@@ -19,6 +20,12 @@ from bittensor.utils import (
     UnlockStatus,
 )
 from bittensor.utils.btlogging import logging
+
+try:
+    from typing import NotRequired
+except ImportError:
+    # fallback to typing_extensions if Python < 3.11
+    from typing_extensions import NotRequired
 
 if TYPE_CHECKING:
     from bittensor_wallet import Wallet
@@ -575,3 +582,118 @@ class BlockInfo:
     header: dict
     extrinsics: list
     explorer: str
+
+
+# TypedDicts
+class PositionResponse(TypedDict):
+    id: int
+    netuid: int
+    tick_low: int
+    tick_high: int
+    liquidity: int
+    fees_tao: FixedPoint
+    fees_alpha: FixedPoint
+
+
+class NeuronCertificateResponse(TypedDict):
+    public_key: str
+    algorithm: int
+
+
+class _CommitmentFields(TypedDict):
+    fields: list[dict[str, str]]
+
+
+class CommitmentOfResponse(TypedDict):
+    deposit: int
+    block: int
+    info: _CommitmentFields
+
+
+class CrowdloansResponse(TypedDict):
+    creator: str
+    deposit: int
+    min_contribution: int
+    end: int
+    cap: int
+    funds_account: str
+    raised: int
+    target_address: str
+    call: Optional[dict]
+    finalized: bool
+    contributors_count: int
+
+
+class SubnetIdentityResponse(TypedDict):
+    subnet_name: str
+    github_repo: str
+    subnet_contact: str
+    subnet_url: str
+    discord: str
+    description: str
+    logo_url: str
+    additional: str
+
+
+class DynamicInfoResponse(TypedDict):
+    netuid: int
+    owner_hotkey: str
+    owner_coldkey: str
+    subnet_name: list[int]  # needs bytes.decode('utf-8') to stringify
+    token_symbol: list[int]  # needs bytes.decode('utf-8') to stringify
+    tempo: int
+    last_step: int
+    blocks_since_last_step: int
+    emission: int
+    alpha_in: int
+    alpha_out: int
+    tao_in: int
+    alpha_out_emission: int
+    alpha_in_emission: int
+    tao_in_emission: int
+    pending_alpha_emission: int
+    pending_root_emission: int
+    subnet_volume: int
+    network_registered_at: int
+    subnet_identity: SubnetIdentityResponse
+    moving_price: FixedPoint
+    price: NotRequired["Balance"]
+
+
+class LockState(TypedDict):
+    """
+    Exponential lock state for a coldkey on a subnet.
+
+    Attributes:
+        locked_mass: Exponentially decaying locked amount (Balance in subnet Alpha).
+        conviction: Matured decaying score (integral of locked_mass over time).
+        last_update: Block number of last roll-forward.
+    """
+
+    locked_mass: "Balance"
+    conviction: float
+    last_update: int
+
+
+@dataclass(frozen=True)
+class EpochScheduleState:
+    """Snapshot of on-chain epoch schedule state at a given block.
+
+    Aggregates storage fields needed by the SDK and ``bittensor-drand`` to compute epoch predictions.
+    All fields are queried at the same ``block_hash`` to ensure consistency.
+
+    Attributes:
+        last_epoch_block: The block at which the last epoch fired for this subnet.
+        pending_epoch_at: Block at which an owner-triggered epoch is scheduled (``0`` = none).
+        subnet_epoch_index: Monotonically increasing epoch counter for this subnet.
+        tempo: The subnet's tempo (epoch period in blocks).
+        blocks_since_last_step: Blocks elapsed since the last epoch.
+        current_block: The reference block at which the snapshot was taken.
+    """
+
+    last_epoch_block: int
+    pending_epoch_at: int
+    subnet_epoch_index: int
+    tempo: int
+    blocks_since_last_step: int
+    current_block: int

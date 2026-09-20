@@ -15,12 +15,14 @@ from inspect import signature, Signature, Parameter
 from typing import Any, Awaitable, Callable, Optional, Tuple
 
 from async_substrate_interface.utils import json
+from pydantic import ValidationError
 import uvicorn
 from bittensor_wallet import Wallet, Keypair
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.routing import serialize_response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.types import ASGIApp
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -972,9 +974,10 @@ class Axon:
                 ):
                     raise Exception("Nonce is too old, a newer one was last processed")
 
-            if synapse.dendrite.signature and not keypair.verify(
-                message, synapse.dendrite.signature
-            ):
+            if not synapse.dendrite.signature:
+                raise Exception("Missing Signature")
+
+            if not keypair.verify(message, synapse.dendrite.signature):
                 raise Exception(
                     f"Signature mismatch with {message} and {synapse.dendrite.signature}"
                 )
@@ -1097,7 +1100,7 @@ class AxonMiddleware(BaseHTTPMiddleware):
     such as response header updating and logging.
     """
 
-    def __init__(self, app: "AxonMiddleware", axon: "Axon"):
+    def __init__(self, app: ASGIApp, axon: "Axon"):
         """
         Initialize the AxonMiddleware class.
 
@@ -1232,13 +1235,17 @@ class AxonMiddleware(BaseHTTPMiddleware):
         This method sets the foundation for the subsequent steps in the request handling process,
         ensuring that all necessary information is encapsulated within the Synapse object.
         """
-        # Extracts the request name from the URL path.
+        # Extracts the request name from the URL path. `split("/")[1]` can
+        # only realistically fail with `IndexError` (empty path) or
+        # `AttributeError` (malformed/mocked request without a `url`); a bare
+        # `except Exception` here would swallow `MemoryError`, real bugs from
+        # `starlette`, etc., and relabel them as malformed-request errors.
         try:
             request_name = request.url.path.split("/")[1]
-        except Exception:
+        except (IndexError, AttributeError) as e:
             raise InvalidRequestNameError(
                 f"Improperly formatted request. Could not parser request {request.url.path}."
-            )
+            ) from e
 
         # Creates a synapse instance from the headers using the appropriate forward class type
         # based on the request name obtained from the URL path.
@@ -1248,12 +1255,17 @@ class AxonMiddleware(BaseHTTPMiddleware):
                 f"Synapse name '{request_name}' not found. Available synapses {list(self.axon.forward_class_types.keys())}"
             )
 
+        # `from_headers` constructs a pydantic model from header inputs; the
+        # realistic failure modes are `ValidationError` (field-level),
+        # `TypeError` (bad kwarg types), and `ValueError` (custom validators).
+        # Narrowing keeps unrelated infrastructure failures visible instead of
+        # relabeling them as malformed-request errors.
         try:
             synapse = request_synapse.from_headers(request.headers)  # type: ignore
-        except Exception:
+        except (ValidationError, TypeError, ValueError) as e:
             raise SynapseParsingError(
                 f"Improperly formatted request. Could not parse headers {request.headers} into synapse of type {request_name}."
-            )
+            ) from e
         synapse.name = request_name
 
         # Fills the local axon information into the synapse.

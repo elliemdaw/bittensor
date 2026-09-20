@@ -6,7 +6,6 @@ import sys
 from typing import Optional
 from bittensor_wallet import Keypair, Wallet
 
-from bittensor.extras import SubtensorApi
 from bittensor.utils.btlogging import logging
 
 template_path = os.getcwd() + "/neurons/"
@@ -64,7 +63,7 @@ def clone_or_update_templates(specific_commit=None):
     """
     install_dir = template_path
     repo_mapping = {
-        templates_repo: "https://github.com/opentensor/subnet-template.git",
+        templates_repo: "https://github.com/latent-to/subnet-template.git",
     }
 
     cwd = os.getcwd()
@@ -132,6 +131,7 @@ class Templates:
         async def __aenter__(self):
             env = os.environ.copy()
             env["BT_LOGGING_DEBUG"] = "1"
+            env["BT_NO_PARSE_CLI_ARGS"] = "false"
             self.process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 f"{self.dir}/miner.py",
@@ -196,6 +196,7 @@ class Templates:
         async def __aenter__(self):
             env = os.environ.copy()
             env["BT_LOGGING_DEBUG"] = "1"
+            env["BT_NO_PARSE_CLI_ARGS"] = "false"
             self.process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 f"{self.dir}/validator.py",

@@ -1,5 +1,164 @@
 # Changelog
 
+## 10.5.0 /2026-06-25
+
+## What's Changed
+* Fix after aiohttp latest release by @basfroman in https://github.com/latent-to/bittensor/pull/3369
+* Forward version_key from commit_weights by @Yupsecous in https://github.com/latent-to/bittensor/pull/3368
+* Update docstrings for kill_pure_proxy_extrinsic by @chideraao in https://github.com/latent-to/bittensor/pull/3374
+* New balancer (attempt 3) by @basfroman in https://github.com/latent-to/bittensor/pull/3362
+* Improvement for async `determine_block_hash` method by @basfroman in https://github.com/latent-to/bittensor/pull/3375
+* fix: test_owner_lock_lifecycle e2e by @thewhaleking in https://github.com/latent-to/bittensor/pull/3379
+* Handle cyscale 0.5.0 by @thewhaleking in https://github.com/latent-to/bittensor/pull/3378
+* fix(pyproject): de-dupe build-system deps by @kilyanni in https://github.com/latent-to/bittensor/pull/3377
+
+## New Contributors
+* @Yupsecous made their first contribution in https://github.com/latent-to/bittensor/pull/3368
+* @kilyanni made their first contribution in https://github.com/latent-to/bittensor/pull/3377
+
+**Full Changelog**: https://github.com/latent-to/bittensor/compare/v10.4.1...v10.5.0
+
+## 10.4.1 /2026-06-11
+
+## What's Changed
+
+* Pins cyscale to 0.4.0 to avoid accidental upgrades which break `Subtensor.get_root_claimable_all_rates`
+* Fix for newer aiohttp versions in testing
+* Improves flaky tests
+
+**Full Changelog**: https://github.com/latent-to/bittensor/compare/v10.4.0...v10.4.1
+
+## 10.4.0 /2026-05-28
+
+## What's Changed
+* Fixes tests in subtensor 2569 by @thewhaleking in https://github.com/latent-to/bittensor/pull/3355
+* Improves monitor_requirements_size_master workflow by @thewhaleking in https://github.com/latent-to/bittensor/pull/3357
+* PR guard workflow by @thewhaleking in https://github.com/latent-to/bittensor/pull/3358
+* Support `Conviction v2` by @basfroman in https://github.com/latent-to/bittensor/pull/3361
+
+**Full Changelog**: https://github.com/latent-to/bittensor/compare/v10.3.2...v10.4.0
+
+## 10.3.2 /2026-05-15
+
+## What's Changed
+* Fix `--help` hijacking on import bittensor by @basfroman in https://github.com/latent-to/bittensor/pull/3347
+* Hopefully, this is a fix for the flaky e2e test by @basfroman in https://github.com/latent-to/bittensor/pull/3348
+* fix(axon): narrow preprocess exception handling and chain causes by @RUNECTZ33 in https://github.com/latent-to/bittensor/pull/3346
+* run do_take_checks at pool validation by @thewhaleking in https://github.com/latent-to/bittensor/pull/3350
+* Mev Shield Nonce Increment Fix by @thewhaleking in https://github.com/latent-to/bittensor/pull/3349
+* Test Fixes by @thewhaleking in https://github.com/latent-to/bittensor/pull/3352
+* Use the public API for clearing nonce cache by @thewhaleking in https://github.com/latent-to/bittensor/pull/3351
+
+## New Contributors
+* @RUNECTZ33 made their first contribution in https://github.com/latent-to/bittensor/pull/3346
+
+**Full Changelog**: https://github.com/latent-to/bittensor/compare/v10.3.1...v10.3.2
+
+## 10.3.1 /2026-05-06
+
+## What's Changed
+* Bumps cyscale and ASI by @thewhaleking in https://github.com/latent-to/bittensor/pull/3336
+* fix(networking): catch real exceptions in get_external_ip fallback chain by @ArtificialXai in https://github.com/latent-to/bittensor/pull/3318
+* Updates packages with CVEs by @thewhaleking in https://github.com/latent-to/bittensor/pull/3339
+* Should fix the change to pytest-asyncio 1.3 by @thewhaleking in https://github.com/latent-to/bittensor/pull/3340
+* Bumping deps versions by @basfroman in https://github.com/latent-to/bittensor/pull/3337
+* Updated error link to point to new docs page by @chideraao in https://github.com/latent-to/bittensor/pull/3341
+
+## New Contributors
+* @ArtificialXai made their first contribution in https://github.com/latent-to/bittensor/pull/3318
+* @chideraao made their first contribution in https://github.com/latent-to/bittensor/pull/3341
+
+**Full Changelog**: https://github.com/latent-to/bittensor/compare/v10.3.0...v10.3.1
+
+## 10.3.0 /2026-04-21
+
+## What's Changed
+* Fix logging.info and state transitions in LoggingMachine by @ionodeionode in https://github.com/latent-to/bittensor/pull/3270
+* Feat/coldkey swap clear by @ibraheem-abe in https://github.com/latent-to/bittensor/pull/3296
+* Removes munch by @thewhaleking in https://github.com/latent-to/bittensor/pull/3298
+* Ensures we don't accidentally install ASI 2.0 on this by @thewhaleking in https://github.com/latent-to/bittensor/pull/3302
+* There is not Balances.transfer by @thewhaleking in https://github.com/latent-to/bittensor/pull/3300
+* Bumps all workflows versions by @thewhaleking in https://github.com/latent-to/bittensor/pull/3301
+* Fix: Updates exception check for Commitment Pallet extension by @ibraheem-abe in https://github.com/latent-to/bittensor/pull/3303
+* Fix and extend incentive e2e test by @basfroman in https://github.com/latent-to/bittensor/pull/3304
+* Fix/e2e tests for stake lock owner alpha by @ibraheem-abe in https://github.com/latent-to/bittensor/pull/3305
+* Update/staking hotkeys limitation for coldkey swap by @ibraheem-abe in https://github.com/latent-to/bittensor/pull/3306
+* Update: Log SHA & update perms of workflow  by @ibraheem-abe in https://github.com/latent-to/bittensor/pull/3307
+* Fix e2e tests (metagraph_info) by @basfroman in https://github.com/latent-to/bittensor/pull/3310
+* Removes flake8, uses ruff for linter check by @thewhaleking in https://github.com/latent-to/bittensor/pull/3313
+* Adds note to httpx in dev reqs by @thewhaleking in https://github.com/latent-to/bittensor/pull/3315
+* Add `register_limit` extrinsic by @basfroman in https://github.com/latent-to/bittensor/pull/3316
+* ASI 2.0 & cyscale by @thewhaleking in https://github.com/latent-to/bittensor/pull/3314
+* Bump ASI req by @thewhaleking in https://github.com/latent-to/bittensor/pull/3324
+* Remove PoW registration, refactor `register()` to use `register_limit` by @basfroman in https://github.com/latent-to/bittensor/pull/3325
+* hoist get_required_fields out of to_headers by @okradze in https://github.com/latent-to/bittensor/pull/3323
+* Adds CODEOWNERS file by @thewhaleking in https://github.com/latent-to/bittensor/pull/3327
+* Bump ASI + cyscale by @thewhaleking in https://github.com/latent-to/bittensor/pull/3326
+
+## New Contributors
+* @ionodeionode made their first contribution in https://github.com/latent-to/bittensor/pull/3270
+* @okradze made their first contribution in https://github.com/latent-to/bittensor/pull/3323
+
+**Full Changelog**: https://github.com/latent-to/bittensor/compare/v10.2.1...v10.3.0
+
+## 10.2.1 /2026-04-22
+
+## What's Changed
+
+* Pins async-substrate-interface under 2.0 to avoid complications
+
+
+## 10.2.0 /2026-03-19
+
+## What's Changed
+* Rework coldkey swap by @basfroman in https://github.com/opentensor/bittensor/pull/3218
+* Make SDK consistent with new `Balancer swap` logic by @basfroman in https://github.com/opentensor/bittensor/pull/3250
+* Fixes for many chain changes by @basfroman in https://github.com/opentensor/bittensor/pull/3254
+* Add subnet buyback extrinsic support to SDK by @basfroman in https://github.com/opentensor/bittensor/pull/3249
+* Add py.typed and pkg tools by @thewhaleking in https://github.com/opentensor/bittensor/pull/3253
+* Rename `subnet_buyback` extrinsic `to add_stake_burn` by @basfroman in https://github.com/opentensor/bittensor/pull/3256
+* fixed fee assumption by @basfroman in https://github.com/opentensor/bittensor/pull/3258
+* `get_subnet_prices` uses new runtime api call + fallback by @basfroman in https://github.com/opentensor/bittensor/pull/3259
+* docs: update documentation URLs to docs.learnbittensor.org by @droppingbeans in https://github.com/opentensor/bittensor/pull/3257
+* docs: fix broken changelog URL and typo in README by @droppingbeans in https://github.com/opentensor/bittensor/pull/3263
+* docs: fix branch name 'develop' to 'staging' in hotfix workflow by @droppingbeans in https://github.com/opentensor/bittensor/pull/3266
+* Handle scaleobj from asi in fixed_to_float by @thewhaleking in https://github.com/opentensor/bittensor/pull/3265
+* fix batching test by @basfroman in https://github.com/opentensor/bittensor/pull/3267
+* Technical debt by @basfroman in https://github.com/opentensor/bittensor/pull/3274
+* Revert/balancer update by @ibraheem-abe in https://github.com/opentensor/bittensor/pull/3276
+* Update e2e gh workflow by @basfroman in https://github.com/opentensor/bittensor/pull/3277
+* Fix typo: pacakge → package in README by @droppingbeans in https://github.com/opentensor/bittensor/pull/3272
+* docs: fix typos in contrib documentation by @droppingbeans in https://github.com/opentensor/bittensor/pull/3271
+* Rework shielded transactions by @basfroman in https://github.com/opentensor/bittensor/pull/3269
+* Re enable alpha fees by @basfroman in https://github.com/opentensor/bittensor/pull/3284
+* Update/mev shield period by @ibraheem-abe in https://github.com/opentensor/bittensor/pull/3280
+* Adds signed commit info to contrib by @thewhaleking in https://github.com/opentensor/bittensor/pull/3289
+* Typing improvements related to InfoBase by @thewhaleking in https://github.com/opentensor/bittensor/pull/3288
+* Update: Pin btwallet requirement by @ibraheem-abe in https://github.com/opentensor/bittensor/pull/3290
+
+## New Contributors
+* @droppingbeans made their first contribution in https://github.com/opentensor/bittensor/pull/3257
+
+**Full Changelog**: https://github.com/opentensor/bittensor/compare/v10.1.0...v10.2.0
+
+## 10.1.0 /2026-01-15
+
+## What's Changed
+* Fix for async metagraph initialization by @basfroman in https://github.com/opentensor/bittensor/pull/3236
+* Clarify return ordering and units for `get_revealed_commitment_by_hotkey` by @Dairus01 in https://github.com/opentensor/bittensor/pull/3231
+* Skips user liquidity e2e test pending the rework by @basfroman in https://github.com/opentensor/bittensor/pull/3239
+* chore: fix incorrect Optional type annotation in utils by @Olexandr88 in https://github.com/opentensor/bittensor/pull/3238
+* chore: remove unused test helper by @Olexandr88 in https://github.com/opentensor/bittensor/pull/3241
+* Add `start_call_delay_hyperparameter` support by @basfroman in https://github.com/opentensor/bittensor/pull/3234
+* Improve `is_fast_blocks` by @basfroman in https://github.com/opentensor/bittensor/pull/3243
+* Adds note about block 5611654 decoding by @thewhaleking in https://github.com/opentensor/bittensor/pull/3246
+
+## New Contributors
+* @Dairus01 made their first contribution in https://github.com/opentensor/bittensor/pull/3231
+* @Olexandr88 made their first contribution in https://github.com/opentensor/bittensor/pull/3238
+
+**Full Changelog**: https://github.com/opentensor/bittensor/compare/v10.0.1...v10.1.0
+
 ## 10.0.1 /2025-12-22
 
 ## What's Changed
