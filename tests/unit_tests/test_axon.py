@@ -21,7 +21,7 @@ from bittensor.core.axon import Axon, AxonMiddleware, FastAPIThreadedServer
 from bittensor.core.errors import RunException
 from bittensor.core.settings import version_as_int
 from bittensor.core.stream import StreamingSynapse
-from bittensor.core.synapse import Synapse
+from bittensor.core.synapse import Synapse, TerminalInfo
 from bittensor.core.threadpool import PriorityThreadPoolExecutor
 from bittensor.utils.axon_utils import (
     allowed_nonce_window_ns,
@@ -29,6 +29,7 @@ from bittensor.utils.axon_utils import (
     ALLOWED_DELTA,
     NANOSECONDS_IN_SECOND,
 )
+from bittensor_wallet import Keypair
 
 
 def test_attach_initial(mock_get_external_ip):
@@ -507,6 +508,50 @@ class TestAxonMiddleware(IsolatedAsyncioTestCase):
         # Check if the preprocess function sets the request name correctly
         assert synapse.name == "request_name"
 
+    @pytest.mark.asyncio
+    async def test_preprocess_wraps_validation_error_with_cause(self):
+        # Regression: pydantic ValidationError from `from_headers` is wrapped
+        # as SynapseParsingError, but `__cause__` preserves the original so
+        # the field-level validation failure remains debuggable.
+        class ValidationFailingSynapse(Synapse):
+            @classmethod
+            def from_headers(cls, headers):
+                raise pydantic.ValidationError.from_exception_data(
+                    "Synapse", [{"type": "missing", "loc": ("name",), "input": {}}]
+                )
+
+        self.mock_axon.forward_class_types = {"vfail": ValidationFailingSynapse}
+
+        request = MagicMock(spec=Request)
+        request.url.path = "/vfail"
+        request.headers = {}
+
+        from bittensor.core.errors import SynapseParsingError
+
+        with pytest.raises(SynapseParsingError) as exc_info:
+            await self.axon_middleware.preprocess(request)
+
+        assert isinstance(exc_info.value.__cause__, pydantic.ValidationError)
+
+    @pytest.mark.asyncio
+    async def test_preprocess_does_not_swallow_unrelated_errors(self):
+        # Regression: `preprocess` no longer catches every `Exception` from
+        # `from_headers`. Unrelated infrastructure errors propagate unchanged
+        # instead of being relabeled as a malformed request.
+        class BoomSynapse(Synapse):
+            @classmethod
+            def from_headers(cls, headers):
+                raise RuntimeError("infra exploded")
+
+        self.mock_axon.forward_class_types = {"boom": BoomSynapse}
+
+        request = MagicMock(spec=Request)
+        request.url.path = "/boom"
+        request.headers = {}
+
+        with pytest.raises(RuntimeError, match="infra exploded"):
+            await self.axon_middleware.preprocess(request)
+
 
 class SynapseHTTPClient(TestClient):
     def post_synapse(self, synapse: Synapse):
@@ -709,6 +754,76 @@ def test_nonce_diff_seconds(nonce_offset_seconds):
     assert allowed_delta_seconds == expected_allowed_delta_seconds, (
         f"Expected {expected_allowed_delta_seconds} but got {allowed_delta_seconds}"
     )
+
+
+# ---------------------------------------------------------------------------
+# default_verify signature checks
+# ---------------------------------------------------------------------------
+def _make_default_verify_inputs():
+    """Build an (axon, synapse, dendrite_keypair) trio for default_verify.
+
+    The synapse carries a fresh nonce (so the v7.2 freshness check passes) and
+    a valid dendrite hotkey; each test sets `synapse.dendrite.signature` to
+    probe the signature branch.
+    """
+    dendrite_keypair = Keypair.create_from_uri("//Alice")
+    receiver_keypair = Keypair.create_from_uri("//Bob")
+    axon = Axon(
+        ip="192.0.2.1",
+        external_ip="192.0.2.1",
+        wallet=MockWallet(MockHotkey(receiver_keypair.ss58_address)),
+    )
+    synapse = SynapseMock()
+    synapse.dendrite = TerminalInfo(
+        hotkey=dendrite_keypair.ss58_address,
+        nonce=time.time_ns(),
+        uuid="5ecbd69c-1cec-11ee-b0dc-e29ce36fec1a",
+        version=version_as_int,
+    )
+    return axon, synapse, dendrite_keypair
+
+
+def _default_verify_message(axon, synapse):
+    return (
+        f"{synapse.dendrite.nonce}.{synapse.dendrite.hotkey}."
+        f"{axon.wallet.hotkey.ss58_address}.{synapse.dendrite.uuid}."
+        f"{synapse.computed_body_hash}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_default_verify_valid_signature_passes():
+    axon, synapse, dendrite_keypair = _make_default_verify_inputs()
+    message = _default_verify_message(axon, synapse)
+    synapse.dendrite.signature = "0x" + dendrite_keypair.sign(message).hex()
+
+    await axon.default_verify(synapse)
+
+    endpoint_key = f"{synapse.dendrite.hotkey}:{synapse.dendrite.uuid}"
+    assert axon.nonces[endpoint_key] == synapse.dendrite.nonce
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("empty_sig", ["", None])
+async def test_default_verify_missing_signature_raises(empty_sig):
+    # Regression: a falsy signature must NOT skip verification. Previously the
+    # check was `if signature and not verify(...)`, so an empty/None signature
+    # short-circuited and the request was accepted, allowing hotkey spoofing.
+    axon, synapse, _ = _make_default_verify_inputs()
+    synapse.dendrite.signature = empty_sig
+
+    with pytest.raises(Exception, match="Missing Signature"):
+        await axon.default_verify(synapse)
+
+
+@pytest.mark.asyncio
+async def test_default_verify_wrong_signature_raises():
+    # A present-but-invalid signature is still rejected (unchanged behavior).
+    axon, synapse, _ = _make_default_verify_inputs()
+    synapse.dendrite.signature = "0x" + ("00" * 64)
+
+    with pytest.raises(Exception, match="Signature mismatch"):
+        await axon.default_verify(synapse)
 
 
 # Mimicking axon default_verify nonce verification

@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import Any, Optional, Sequence, Union
 
-from bittensor.core.chain_data.utils import decode_account_id
 from bittensor.utils.balance import Balance
 
 
@@ -12,86 +11,28 @@ class ProxyType(str, Enum):
     These types define the permissions that a proxy account has when acting on behalf of the real account. Each type
     restricts what operations the proxy can perform.
 
-    Proxy Type Descriptions:
-
-        Any: Allows the proxy to execute any call on behalf of the real account. This is the most permissive but least
-            secure proxy type. Use with caution.
-
-        Owner: Allows the proxy to manage subnet identity and settings. Permitted operations include:
-            - AdminUtils calls (except sudo_set_sn_owner_hotkey)
-            - set_subnet_identity
-            - update_symbol
-
-        NonCritical: Allows all operations except critical ones that could harm the account. Prohibited operations:
-            - dissolve_network
-            - root_register
-            - burned_register
-            - Sudo calls
-
-        NonTransfer: Allows all operations except those involving token transfers. Prohibited operations:
-            - All Balances module calls
-            - transfer_stake
-            - schedule_swap_coldkey
-            - swap_coldkey
-
-        NonFungible: Allows all operations except token-related operations and registrations. Prohibited operations:
-            - All Balances module calls
-            - All staking operations (add_stake, remove_stake, unstake_all, swap_stake, move_stake, transfer_stake)
-            - Registration operations (burned_register, root_register)
-            - Key swap operations (schedule_swap_coldkey, swap_coldkey, swap_hotkey)
-
-        Staking: Allows only staking-related operations. Permitted operations:
-            - add_stake, add_stake_limit
-            - remove_stake, remove_stake_limit, remove_stake_full_limit
-            - unstake_all, unstake_all_alpha
-            - swap_stake, swap_stake_limit
-            - move_stake
-
-        Registration: Allows only neuron registration operations. Permitted operations:
-            - burned_register
-            - register
-
-        Transfer: Allows only token transfer operations. Permitted operations:
-            - transfer_keep_alive
-            - transfer_allow_death
-            - transfer_all
-            - transfer_stake
-
-        SmallTransfer: Allows only small token transfers below a specific limit. Permitted operations:
-            - transfer_keep_alive (if value < SMALL_TRANSFER_LIMIT)
-            - transfer_allow_death (if value < SMALL_TRANSFER_LIMIT)
-            - transfer_stake (if alpha_amount < SMALL_TRANSFER_LIMIT)
-
-        ChildKeys: Allows only child key management operations. Permitted operations:
-            - set_children
-            - set_childkey_take
-
-        SudoUncheckedSetCode: Allows only runtime code updates. Permitted operations:
-            - sudo_unchecked_weight with inner call System::set_code
-
-        SwapHotkey: Allows only hotkey swap operations. Permitted operations:
-            - swap_hotkey
-
-        SubnetLeaseBeneficiary: Allows subnet management and configuration operations. Permitted operations:
-            - start_call
-            - Multiple AdminUtils.sudo_set_* calls for subnet parameters, network settings, weights, alpha values, etc.
-
-        RootClaim: Allows only root claim operations. Permitted operations:
-            - claim_root
-            - set_root_claim_type
+    Proxy Types:
+        Any: Full permissions — allows all calls. Use with extreme caution.
+        ChildKeys: Only child key management operations.
+        NonCritical: All operations except critical/destructive ones.
+        NonTransfer: All operations except token transfers.
+        NonFungible: All operations except token/staking/registration/key-swap operations.
+        Owner: Subnet identity and settings management.
+        Registration: Only neuron registration operations.
+        RootClaim: Only root claim operations.
+        SmallTransfer: Only token transfers below the on-chain limit.
+        Staking: Only staking-related operations.
+        SubnetLeaseBeneficiary: Subnet management for lease beneficiaries.
+        SudoUncheckedSetCode: Only runtime code updates via sudo.
+        SwapHotkey: Only hotkey swap operations.
+        Transfer: Only token transfer operations.
 
     Notes:
-        - The permissions described above may change over time as the Subtensor runtime evolves. For the most up-to-date
-          and authoritative information about proxy type permissions, refer to the Subtensor source code at:
-          <https://github.com/opentensor/subtensor/blob/main/runtime/src/lib.rs>
-          Specifically, look for the `impl InstanceFilter<RuntimeCall> for ProxyType` implementation which defines the
-          exact filtering logic for each proxy type.
-        - The values match exactly with the ProxyType enum defined in the Subtensor runtime. Any changes to the
-          runtime enum must be reflected here.
+        - To retrieve the exact, up-to-date filter rules (which extrinsics each type permits or denies), use
+          :meth:`~bittensor.core.async_/subtensor.Async/Subtensor.get_proxy_filter`.
         - Proxy overview: <https://docs.learnbittensor.org/keys/proxies>
         - Creating and managing proxies: <https://docs.learnbittensor.org/keys/proxies/create-proxy>
         - Pure proxies: <https://docs.learnbittensor.org/keys/proxies/pure-proxies>
-
     """
 
     Any = "Any"
@@ -195,7 +136,7 @@ class ProxyInfo:
     delay: int
 
     @classmethod
-    def from_tuple(cls, data: tuple) -> list["ProxyInfo"]:
+    def from_tuple(cls, data: Sequence[dict[str, str | int]]) -> list["ProxyInfo"]:
         """Creates a list of ProxyInfo objects from chain proxy data.
 
         This method decodes the raw proxy data returned from the Proxy.Proxies storage function and creates
@@ -212,8 +153,8 @@ class ProxyInfo:
         """
         return [
             cls(
-                delegate=decode_account_id(proxy["delegate"]),
-                proxy_type=next(iter(proxy["proxy_type"].keys())),
+                delegate=proxy["delegate"],
+                proxy_type=proxy["proxy_type"],
                 delay=proxy["delay"],
             )
             for proxy in data
@@ -241,13 +182,15 @@ class ProxyInfo:
             See: <https://docs.learnbittensor.org/keys/proxies>
         """
         # proxies data is always in that path
-        proxies = query.value[0][0]
+        proxies = query.value[0]
         # balance data is always in that path
         balance = query.value[1]
         return cls.from_tuple(proxies), Balance.from_rao(balance)
 
     @classmethod
-    def from_query_map_record(cls, record: list) -> tuple[str, list["ProxyInfo"]]:
+    def from_query_map_record(
+        cls, record: tuple[str, tuple[list[dict[str, str | int]], int]]
+    ) -> tuple[str, list["ProxyInfo"]]:
         """Creates a dictionary mapping delegate addresses to their ProxyInfo lists from a query_map record.
 
         Processes a single record from a query_map call to the Proxy.Proxies storage function. Each record represents
@@ -264,9 +207,9 @@ class ProxyInfo:
         """
         # record[0] is the real account (key from storage)
         # record[1] is the value containing proxies data
-        real_account_ss58 = decode_account_id(record[0])
+        real_account_ss58 = record[0]
         # list with proxies data is always in that path
-        proxy_data = cls.from_tuple(record[1].value[0][0])
+        proxy_data = cls.from_tuple(record[1][0])
         return real_account_ss58, proxy_data
 
 
@@ -297,7 +240,9 @@ class ProxyAnnouncementInfo:
     height: int
 
     @classmethod
-    def from_dict(cls, data: tuple) -> list["ProxyAnnouncementInfo"]:
+    def from_dict(
+        cls, data: tuple[list[dict[str, str | int]], int]
+    ) -> list["ProxyAnnouncementInfo"]:
         """Creates a list of ProxyAnnouncementInfo objects from chain announcement data.
 
         This method decodes the raw announcement data returned from the Proxy.Announcements storage function.
@@ -313,8 +258,8 @@ class ProxyAnnouncementInfo:
         """
         return [
             cls(
-                real=decode_account_id(next(iter(annt["real"]))),
-                call_hash="0x" + bytes(next(iter(annt["call_hash"]))).hex(),
+                real=annt["real"],
+                call_hash=annt["call_hash"],
                 height=annt["height"],
             )
             for annt in data[0]
@@ -322,7 +267,7 @@ class ProxyAnnouncementInfo:
 
     @classmethod
     def from_query_map_record(
-        cls, record: tuple
+        cls, record: tuple[str, tuple[list[dict[str, str | int]], int]]
     ) -> tuple[str, list["ProxyAnnouncementInfo"]]:
         """Returns a list of ProxyAnnouncementInfo objects from a tuple of announcements data.
 
@@ -337,9 +282,9 @@ class ProxyAnnouncementInfo:
         """
         # record[0] is the real account (key from storage)
         # record[1] is the value containing announcements data
-        delegate = decode_account_id(record[0])
+        delegate = record[0]
         # list with proxies data is always in that path
-        announcements_data = cls.from_dict(record[1].value[0])
+        announcements_data = cls.from_dict(record[1])
         return delegate, announcements_data
 
 
@@ -412,3 +357,97 @@ class ProxyConstants:
         from dataclasses import asdict
 
         return asdict(self)
+
+
+@dataclass
+class ProxyTypeInfo:
+    """Runtime information about a proxy type variant.
+
+    This data is returned by the ``ProxyFilterRuntimeApi.getProxyTypes`` runtime API and represents the authoritative
+    source of truth for which proxy types exist in the current runtime.
+
+    Attributes:
+        name: The proxy type name (e.g., ``"Staking"``, ``"NonTransfer"``).
+        index: The numeric index of this proxy type in the runtime enum.
+        deprecated: Whether this proxy type is deprecated and no longer functional.
+
+    Notes:
+        - See: <https://docs.learnbittensor.org/keys/proxies>
+    """
+
+    name: str
+    index: int
+    deprecated: bool
+
+    @classmethod
+    def from_list(cls, data: list[dict]) -> list["ProxyTypeInfo"]:
+        """Creates a list of ProxyTypeInfo from the ``ProxyFilterRuntimeApi.getProxyTypes`` runtime API response.
+
+        Parameters:
+            data: List of dictionaries from the runtime API response.
+
+        Returns:
+            List of ProxyTypeInfo objects.
+        """
+        return [
+            cls(name=item["name"], index=item["index"], deprecated=item["deprecated"])
+            for item in data
+        ]
+
+
+@dataclass
+class ProxyFilterInfo:
+    """Describes how a specific proxy type filters incoming runtime calls.
+
+    This data is returned by the ``ProxyFilterRuntimeApi.getProxyFilter`` runtime API and represents the authoritative
+    source of truth for proxy permissions. It describes which extrinsics each proxy type is allowed or denied to
+    execute on behalf of the real account.
+
+    Attributes:
+        proxy_type: The numeric index of the proxy type.
+        name: Human-readable name of the proxy type (e.g., ``"Staking"``, ``"NonTransfer"``).
+        deprecated: Whether this proxy type is deprecated.
+        filter_mode: How filtering works. One of:
+
+            - ``"AllowAll"``: All calls are permitted (e.g., ``ProxyType.Any``).
+            - ``"DenyAll"``: No calls are permitted (e.g., deprecated types).
+            - ``"Allow"``: Only calls listed in ``calls`` are permitted (minus ``exceptions``).
+            - ``"Deny"``: All calls are permitted EXCEPT those listed in ``calls``.
+        calls: List of call descriptors that the filter applies to. Each is a dict with keys: ``pallet_name``,
+            ``pallet_index``, ``call_name`` (``None`` means all calls in the pallet), ``call_index``, ``condition``
+            (``None`` or a dict describing the condition — e.g., ``{"ParamLessThan": {"param_name": ..., "limit": ...}}``
+            or ``{"NestedCallMustBe": {"pallet_name": ..., "call_name": ...}}``).
+        exceptions: List of call descriptors excluded from the filter rule (same structure as ``calls``).
+
+    Notes:
+        - See: <https://docs.learnbittensor.org/keys/proxies>
+    """
+
+    proxy_type: int
+    name: str
+    deprecated: bool
+    filter_mode: str
+    calls: list[dict]
+    exceptions: list[dict]
+
+    @classmethod
+    def from_list(cls, data: list[dict]) -> list["ProxyFilterInfo"]:
+        """Creates a list of ProxyFilterInfo from the ``ProxyFilterRuntimeApi.getProxyFilter`` runtime API response.
+
+        Parameters:
+            data: List of dictionaries from the runtime API response.
+
+        Returns:
+            List of ProxyFilterInfo objects.
+        """
+        return [
+            cls(
+                proxy_type=item["proxy_type"],
+                name=item["name"],
+                deprecated=item["deprecated"],
+                filter_mode=item["filter_mode"],
+                calls=item.get("calls", []),
+                exceptions=item.get("exceptions", []),
+            )
+            for item in data
+        ]

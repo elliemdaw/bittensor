@@ -4,7 +4,7 @@ import hashlib
 import inspect
 import warnings
 from collections import namedtuple
-from typing import Any, Literal, Union, Optional, TYPE_CHECKING
+from typing import Any, Literal, Union, Optional, Type, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import scalecodec
@@ -14,7 +14,7 @@ from async_substrate_interface.utils import (
 from bittensor_wallet import Keypair
 from bittensor_wallet.errors import KeyFileError, PasswordError
 from bittensor_wallet.utils import SS58_FORMAT
-from scalecodec import (
+from scalecodec.utils.ss58 import (
     ss58_decode,
     ss58_encode,
     is_valid_ss58_address as _is_valid_ss58_address,
@@ -25,10 +25,14 @@ from bittensor.utils.btlogging import logging
 from .registration import torch, use_torch
 from .version import check_version, VersionCheckError
 
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
+
 if TYPE_CHECKING:
     from bittensor_wallet import Wallet
-    from bittensor.core.types import ExtrinsicResponse
-    from bittensor.utils.balance import Balance
+    from bittensor.core.types import ExtrinsicResponse, NeuronCertificateResponse
 
 # keep save from import analyzer as obvious aliases
 hex_to_ss58 = ss58_encode
@@ -41,6 +45,14 @@ U64_MAX = 18446744073709551615
 GLOBAL_MAX_SUBNET_COUNT = 4096
 
 UnlockStatus = namedtuple("UnlockStatus", ["success", "message"])
+
+
+class ChainFeatureDisabledWarning(UserWarning):
+    """Warning indicating that a feature is currently disabled on the chain side.
+
+    This warning is issued when SDK functionality depends on chain feats that are temporarily unavailable or disabled.
+    """
+
 
 # redundant aliases
 logging = logging
@@ -86,32 +98,28 @@ def get_netuid_and_mechid_by_storage_index(storage_index: int) -> tuple[int, int
 
 
 class Certificate(str):
-    def __new__(cls, data: Union[str, dict]):
+    def __new__(cls, data: "str | NeuronCertificateResponse"):
         if isinstance(data, dict):
-            tuple_ascii = data["public_key"][0]
-            string = chr(data["algorithm"]) + "".join(chr(i) for i in tuple_ascii)
+            pubkey: str = data["public_key"]
+            string = chr(data["algorithm"]) + pubkey
         else:
             string = data
         return str.__new__(cls, string)
 
 
-def decode_hex_identity_dict(info_dictionary: dict[str, Any]) -> dict[str, Any]:
+def decode_hex_identity_dict(info_dictionary: dict[str, dict | str]) -> dict[str, Any]:
     """Decodes a dictionary of hexadecimal identities."""
-    decoded_info = {}
-    for k, v in info_dictionary.items():
-        if isinstance(v, dict):
-            item = next(iter(v.values()))
-        else:
-            item = v
 
-        if isinstance(item, tuple):
-            try:
-                decoded_info[k] = bytes(item).decode()
-            except UnicodeDecodeError:
-                print(f"Could not decode: {k}: {item}")
+    for key, value in info_dictionary.items():
+        if isinstance(value, dict):
+            item = list(value.values())[0]
         else:
-            decoded_info[k] = item
-    return decoded_info
+            item = value
+        if isinstance(item, str) and item.startswith("0x"):
+            info_dictionary[key] = hex_to_bytes(item.removeprefix("0x")).decode()
+        else:
+            info_dictionary[key] = item
+    return info_dictionary
 
 
 def ss58_to_vec_u8(ss58_address: str) -> list[int]:
@@ -140,7 +148,7 @@ def strtobool(val: str) -> Union[bool, Literal["==SUPRESS=="]]:
 
 def _get_explorer_root_url_by_network_from_map(
     network: str, network_map: dict[str, dict[str, str]]
-) -> Optional[dict[str, str]]:
+) -> dict[str, str]:
     """
     Returns the explorer root url for the given network name from the given network map.
 
@@ -151,7 +159,7 @@ def _get_explorer_root_url_by_network_from_map(
     Returns:
         The explorer url for the given network. Or None if the network is not in the network map.
     """
-    explorer_urls: Optional[dict[str, str]] = {}
+    explorer_urls: dict[str, str] = {}
     for entity_nm, entity_network_map in network_map.items():
         if network in entity_network_map:
             explorer_urls[entity_nm] = entity_network_map[network]
@@ -161,7 +169,7 @@ def _get_explorer_root_url_by_network_from_map(
 
 def get_explorer_url_for_network(
     network: str, block_hash: str, network_map: dict[str, dict[str, str]]
-) -> Optional[dict[str, str]]:
+) -> dict[str, str]:
     """
     Returns the explorer url for the given block hash and network.
 
@@ -174,10 +182,10 @@ def get_explorer_url_for_network(
         The explorer url for the given block hash and network. Or None if the network is not known.
     """
 
-    explorer_urls: Optional[dict[str, str]] = {}
-    # Will be None if the network is not known. i.e. not in network_map
-    explorer_root_urls: Optional[dict[str, str]] = (
-        _get_explorer_root_url_by_network_from_map(network, network_map)
+    explorer_urls: dict[str, str] = {}
+
+    explorer_root_urls: dict[str, str] = _get_explorer_root_url_by_network_from_map(
+        network, network_map
     )
 
     if explorer_root_urls != {}:
@@ -297,7 +305,7 @@ def format_error_message(error_message: Union[dict, Exception]) -> str:
                 err_docs if isinstance(err_docs, str) else " ".join(err_docs)
             )
             err_description += (
-                f" | Please consult {BT_DOCS_LINK}/errors/subtensor#{err_name.lower()}"
+                f" | Please consult {BT_DOCS_LINK}/subtensor-api/errors#{err_name.lower()}"
             )
 
         elif error_message.get("code") and error_message.get("message"):
@@ -480,10 +488,29 @@ def determine_chain_endpoint_and_network(
     return "unknown", network
 
 
-def deprecated_message(message: str) -> None:
-    """Shows a deprecation warning message with the given message."""
-    warnings.simplefilter("default", DeprecationWarning)
-    warnings.warn(message=message, category=DeprecationWarning, stacklevel=2)
+def deprecated_message(
+    message: Optional[str] = None,
+    replacement_message: Optional[str] = None,
+    category: Type[Warning] = DeprecationWarning,
+    stacklevel: int = 2,
+) -> None:
+    """Shows a warning message with the given message.
+
+    Parameters:
+        message: The warning message to display. If None, a default deprecation message is generated.
+        replacement_message: An optional additional message suggesting a replacement.
+        category: The warning category to use. Defaults to DeprecationWarning.
+        stacklevel: The stack level for the warning. Defaults to 2 (points to the caller of deprecated_message).
+            Increase this value if deprecated_message is called from within another wrapper function.
+    """
+    message = (
+        message
+        if message
+        else f"The called object ({get_caller_name()}) is deprecated and will be removed in a future release."
+    )
+    message = f"{message} {replacement_message}" if replacement_message else message
+    warnings.simplefilter("default", category)
+    warnings.warn(message=message, category=category, stacklevel=stacklevel)
 
 
 def get_function_name() -> str:

@@ -1,3 +1,4 @@
+import ast
 from typing import Optional, TYPE_CHECKING
 
 from async_substrate_interface.errors import (
@@ -57,6 +58,9 @@ __all__ = [
     "TxRateLimitExceeded",
     "UnknownSynapseError",
     "UnstakeError",
+    "SHIELD_VALIDATION_ERRORS",
+    "chain_error_from_substrate_exception",
+    "map_shield_error",
 ]
 
 
@@ -263,3 +267,85 @@ class SynapseDendriteNoneException(SynapseException):
     ):
         self.message = message
         super().__init__(self.message, synapse)
+
+
+SHIELD_VALIDATION_ERRORS = {
+    "Custom error: 23": (
+        "Failed to parse shielded transaction: the ciphertext has an invalid format."
+    ),
+    "Custom error: 24": (
+        "Invalid encryption key: the key_hash in the ciphertext does not match any known key. "
+        "The key may have rotated between reading NextKey and submitting the transaction."
+    ),
+}
+
+
+_CUSTOM_ERROR_CODE_TO_EXCEPTION: dict[int, type["ChainError"]] = {
+    3: SubnetNotExists,
+    4: HotKeyAccountNotExists,
+    6: TxRateLimitExceeded,
+    25: NonAssociatedColdKey,
+    26: DelegateTakeTooLow,
+    27: DelegateTakeTooHigh,
+}
+
+
+def _extract_custom_error_code(error: Exception) -> Optional[int]:
+    """Walk a SubstrateRequestException's args looking for a transaction-pool
+    validity error like ``{'error': {'code': 1010, ..., 'data': 'Custom error: N'}}``
+    and return ``N``. Returns ``None`` if the shape doesn't match."""
+    for arg in getattr(error, "args", ()):
+        parsed = arg
+        if isinstance(parsed, str):
+            try:
+                parsed = ast.literal_eval(parsed)
+            except (ValueError, SyntaxError, MemoryError, RecursionError, TypeError):
+                continue
+        if not isinstance(parsed, dict):
+            continue
+        inner = parsed.get("error", parsed)
+        if not isinstance(inner, dict):
+            continue
+        data = inner.get("data")
+        if isinstance(data, str) and data.startswith("Custom error:"):
+            try:
+                return int(data.split(":", 1)[1].strip())
+            except ValueError:
+                continue
+    return None
+
+
+def chain_error_from_substrate_exception(
+    error: SubstrateRequestException,
+) -> Optional["ChainError"]:
+    """Translate a transaction-pool validation error into a typed
+    :class:`ChainError`. Returns ``None`` when the exception doesn't carry a
+    recognised ``Custom error: N`` code from subtensor's
+    ``CustomTransactionError`` enum, so callers can keep the original."""
+    if isinstance(error, ChainError):
+        return None
+    code = _extract_custom_error_code(error)
+    if code is None:
+        return None
+    exc_cls = _CUSTOM_ERROR_CODE_TO_EXCEPTION.get(code)
+    if exc_cls is None:
+        return None
+    return exc_cls(*error.args)
+
+
+def map_shield_error(raw_message: str) -> str:
+    """Map a raw shield validation error to a human-readable description.
+
+    Checks the message against known Custom error codes from CheckShieldedTxValidity,
+    then falls back to detecting a generic ``"invalid"`` subscription status.
+    Returns the original message unchanged if nothing matches.
+    """
+    for marker, description in SHIELD_VALIDATION_ERRORS.items():
+        if marker in raw_message:
+            return description
+    if "'result': 'invalid'" in raw_message.lower():
+        return (
+            "MEV Shield extrinsic rejected as invalid. "
+            "The key may have rotated between reading NextKey and submission."
+        )
+    return raw_message

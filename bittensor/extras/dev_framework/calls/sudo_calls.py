@@ -11,7 +11,7 @@ For developers:
 
 Note:
     Any manual changes will be overwritten the next time the generator is run.
-    Subtensor spec version: 331
+    Subtensor spec version: 417
 """
 
 from collections import namedtuple
@@ -53,11 +53,22 @@ SUDO_SET_BONDS_PENALTY = namedtuple(
 SUDO_SET_BONDS_RESET_ENABLED = namedtuple(
     "SUDO_SET_BONDS_RESET_ENABLED", ["wallet", "pallet", "sudo", "netuid", "enabled"]
 )  # args: [netuid: NetUid, enabled: bool]  | Pallet: AdminUtils
+SUDO_SET_BURN_HALF_LIFE = namedtuple(
+    "SUDO_SET_BURN_HALF_LIFE", ["wallet", "pallet", "sudo", "netuid", "burn_half_life"]
+)  # args: [netuid: NetUid, burn_half_life: u16]  | Pallet: AdminUtils
+SUDO_SET_BURN_INCREASE_MULT = namedtuple(
+    "SUDO_SET_BURN_INCREASE_MULT",
+    ["wallet", "pallet", "sudo", "netuid", "burn_increase_mult"],
+)  # args: [netuid: NetUid, burn_increase_mult: U64F64]  | Pallet: AdminUtils
 SUDO_SET_CK_BURN = namedtuple(
     "SUDO_SET_CK_BURN", ["wallet", "pallet", "sudo", "burn"]
 )  # args: [burn: u64]  | Pallet: AdminUtils
-SUDO_SET_COLDKEY_SWAP_SCHEDULE_DURATION = namedtuple(
-    "SUDO_SET_COLDKEY_SWAP_SCHEDULE_DURATION", ["wallet", "pallet", "sudo", "duration"]
+SUDO_SET_COLDKEY_SWAP_ANNOUNCEMENT_DELAY = namedtuple(
+    "SUDO_SET_COLDKEY_SWAP_ANNOUNCEMENT_DELAY", ["wallet", "pallet", "sudo", "duration"]
+)  # args: [duration: BlockNumberFor<T>]  | Pallet: AdminUtils
+SUDO_SET_COLDKEY_SWAP_REANNOUNCEMENT_DELAY = namedtuple(
+    "SUDO_SET_COLDKEY_SWAP_REANNOUNCEMENT_DELAY",
+    ["wallet", "pallet", "sudo", "duration"],
 )  # args: [duration: BlockNumberFor<T>]  | Pallet: AdminUtils
 SUDO_SET_COMMIT_REVEAL_VERSION = namedtuple(
     "SUDO_SET_COMMIT_REVEAL_VERSION", ["wallet", "pallet", "sudo", "version"]
@@ -110,13 +121,16 @@ SUDO_SET_MAX_ALLOWED_VALIDATORS = namedtuple(
 )  # args: [netuid: NetUid, max_allowed_validators: u16]  | Pallet: AdminUtils
 SUDO_SET_MAX_BURN = namedtuple(
     "SUDO_SET_MAX_BURN", ["wallet", "pallet", "sudo", "netuid", "max_burn"]
-)  # args: [netuid: NetUid, max_burn: TaoCurrency]  | Pallet: AdminUtils
+)  # args: [netuid: NetUid, max_burn: TaoBalance]  | Pallet: AdminUtils
 SUDO_SET_MAX_CHILDKEY_TAKE = namedtuple(
     "SUDO_SET_MAX_CHILDKEY_TAKE", ["wallet", "pallet", "sudo", "take"]
 )  # args: [take: u16]  | Pallet: SubtensorModule
 SUDO_SET_MAX_DIFFICULTY = namedtuple(
     "SUDO_SET_MAX_DIFFICULTY", ["wallet", "pallet", "sudo", "netuid", "max_difficulty"]
 )  # args: [netuid: NetUid, max_difficulty: u64]  | Pallet: AdminUtils
+SUDO_SET_MAX_MECHANISM_COUNT = namedtuple(
+    "SUDO_SET_MAX_MECHANISM_COUNT", ["wallet", "pallet", "sudo", "max_mechanism_count"]
+)  # args: [max_mechanism_count: MechId]  | Pallet: AdminUtils
 SUDO_SET_MAX_REGISTRATIONS_PER_BLOCK = namedtuple(
     "SUDO_SET_MAX_REGISTRATIONS_PER_BLOCK",
     ["wallet", "pallet", "sudo", "netuid", "max_registrations_per_block"],
@@ -139,22 +153,29 @@ SUDO_SET_MIN_ALLOWED_WEIGHTS = namedtuple(
 )  # args: [netuid: NetUid, min_allowed_weights: u16]  | Pallet: AdminUtils
 SUDO_SET_MIN_BURN = namedtuple(
     "SUDO_SET_MIN_BURN", ["wallet", "pallet", "sudo", "netuid", "min_burn"]
-)  # args: [netuid: NetUid, min_burn: TaoCurrency]  | Pallet: AdminUtils
+)  # args: [netuid: NetUid, min_burn: TaoBalance]  | Pallet: AdminUtils
 SUDO_SET_MIN_CHILDKEY_TAKE = namedtuple(
     "SUDO_SET_MIN_CHILDKEY_TAKE", ["wallet", "pallet", "sudo", "take"]
 )  # args: [take: u16]  | Pallet: SubtensorModule
+SUDO_SET_MIN_CHILDKEY_TAKE_PER_SUBNET = namedtuple(
+    "SUDO_SET_MIN_CHILDKEY_TAKE_PER_SUBNET",
+    ["wallet", "pallet", "sudo", "netuid", "take"],
+)  # args: [netuid: NetUid, take: u16]  | Pallet: AdminUtils
 SUDO_SET_MIN_DELEGATE_TAKE = namedtuple(
     "SUDO_SET_MIN_DELEGATE_TAKE", ["wallet", "pallet", "sudo", "take"]
 )  # args: [take: u16]  | Pallet: AdminUtils
 SUDO_SET_MIN_DIFFICULTY = namedtuple(
     "SUDO_SET_MIN_DIFFICULTY", ["wallet", "pallet", "sudo", "netuid", "min_difficulty"]
 )  # args: [netuid: NetUid, min_difficulty: u64]  | Pallet: AdminUtils
+SUDO_SET_MIN_NON_IMMUNE_UIDS = namedtuple(
+    "SUDO_SET_MIN_NON_IMMUNE_UIDS", ["wallet", "pallet", "sudo", "netuid", "min"]
+)  # args: [netuid: NetUid, min: u16]  | Pallet: AdminUtils
 SUDO_SET_NETWORK_IMMUNITY_PERIOD = namedtuple(
     "SUDO_SET_NETWORK_IMMUNITY_PERIOD", ["wallet", "pallet", "sudo", "immunity_period"]
 )  # args: [immunity_period: u64]  | Pallet: AdminUtils
 SUDO_SET_NETWORK_MIN_LOCK_COST = namedtuple(
     "SUDO_SET_NETWORK_MIN_LOCK_COST", ["wallet", "pallet", "sudo", "lock_cost"]
-)  # args: [lock_cost: TaoCurrency]  | Pallet: AdminUtils
+)  # args: [lock_cost: TaoBalance]  | Pallet: AdminUtils
 SUDO_SET_NETWORK_POW_REGISTRATION_ALLOWED = namedtuple(
     "SUDO_SET_NETWORK_POW_REGISTRATION_ALLOWED",
     ["wallet", "pallet", "sudo", "netuid", "registration_allowed"],
@@ -166,12 +187,22 @@ SUDO_SET_NETWORK_REGISTRATION_ALLOWED = namedtuple(
     "SUDO_SET_NETWORK_REGISTRATION_ALLOWED",
     ["wallet", "pallet", "sudo", "netuid", "registration_allowed"],
 )  # args: [netuid: NetUid, registration_allowed: bool]  | Pallet: AdminUtils
+SUDO_SET_NET_TAO_FLOW_ENABLED = namedtuple(
+    "SUDO_SET_NET_TAO_FLOW_ENABLED", ["wallet", "pallet", "sudo", "enabled"]
+)  # args: [enabled: bool]  | Pallet: AdminUtils
 SUDO_SET_NOMINATOR_MIN_REQUIRED_STAKE = namedtuple(
     "SUDO_SET_NOMINATOR_MIN_REQUIRED_STAKE", ["wallet", "pallet", "sudo", "min_stake"]
 )  # args: [min_stake: u64]  | Pallet: AdminUtils
 SUDO_SET_NUM_ROOT_CLAIMS = namedtuple(
     "SUDO_SET_NUM_ROOT_CLAIMS", ["wallet", "pallet", "sudo", "new_value"]
 )  # args: [new_value: u64]  | Pallet: SubtensorModule
+SUDO_SET_OWNER_CUT_AUTO_LOCK_ENABLED = namedtuple(
+    "SUDO_SET_OWNER_CUT_AUTO_LOCK_ENABLED",
+    ["wallet", "pallet", "sudo", "netuid", "enabled"],
+)  # args: [netuid: NetUid, enabled: bool]  | Pallet: AdminUtils
+SUDO_SET_OWNER_CUT_ENABLED = namedtuple(
+    "SUDO_SET_OWNER_CUT_ENABLED", ["wallet", "pallet", "sudo", "netuid", "enabled"]
+)  # args: [netuid: NetUid, enabled: bool]  | Pallet: AdminUtils
 SUDO_SET_OWNER_HPARAM_RATE_LIMIT = namedtuple(
     "SUDO_SET_OWNER_HPARAM_RATE_LIMIT", ["wallet", "pallet", "sudo", "epochs"]
 )  # args: [epochs: u16]  | Pallet: AdminUtils
@@ -181,7 +212,7 @@ SUDO_SET_OWNER_IMMUNE_NEURON_LIMIT = namedtuple(
 )  # args: [netuid: NetUid, immune_neurons: u16]  | Pallet: AdminUtils
 SUDO_SET_RAO_RECYCLED = namedtuple(
     "SUDO_SET_RAO_RECYCLED", ["wallet", "pallet", "sudo", "netuid", "rao_recycled"]
-)  # args: [netuid: NetUid, rao_recycled: TaoCurrency]  | Pallet: AdminUtils
+)  # args: [netuid: NetUid, rao_recycled: TaoBalance]  | Pallet: AdminUtils
 SUDO_SET_RECYCLE_OR_BURN = namedtuple(
     "SUDO_SET_RECYCLE_OR_BURN",
     ["wallet", "pallet", "sudo", "netuid", "recycle_or_burn"],
@@ -202,6 +233,13 @@ SUDO_SET_SN_OWNER_HOTKEY = namedtuple(
 SUDO_SET_STAKE_THRESHOLD = namedtuple(
     "SUDO_SET_STAKE_THRESHOLD", ["wallet", "pallet", "sudo", "min_stake"]
 )  # args: [min_stake: u64]  | Pallet: AdminUtils
+SUDO_SET_START_CALL_DELAY = namedtuple(
+    "SUDO_SET_START_CALL_DELAY", ["wallet", "pallet", "sudo", "delay"]
+)  # args: [delay: u64]  | Pallet: AdminUtils
+SUDO_SET_SUBNET_EMISSION_ENABLED = namedtuple(
+    "SUDO_SET_SUBNET_EMISSION_ENABLED",
+    ["wallet", "pallet", "sudo", "netuid", "enabled"],
+)  # args: [netuid: NetUid, enabled: bool]  | Pallet: AdminUtils
 SUDO_SET_SUBNET_LIMIT = namedtuple(
     "SUDO_SET_SUBNET_LIMIT", ["wallet", "pallet", "sudo", "max_subnets"]
 )  # args: [max_subnets: u16]  | Pallet: AdminUtils
@@ -218,6 +256,16 @@ SUDO_SET_SUBTOKEN_ENABLED = namedtuple(
     "SUDO_SET_SUBTOKEN_ENABLED",
     ["wallet", "pallet", "sudo", "netuid", "subtoken_enabled"],
 )  # args: [netuid: NetUid, subtoken_enabled: bool]  | Pallet: AdminUtils
+SUDO_SET_TAO_FLOW_CUTOFF = namedtuple(
+    "SUDO_SET_TAO_FLOW_CUTOFF", ["wallet", "pallet", "sudo", "flow_cutoff"]
+)  # args: [flow_cutoff: I64F64]  | Pallet: AdminUtils
+SUDO_SET_TAO_FLOW_NORMALIZATION_EXPONENT = namedtuple(
+    "SUDO_SET_TAO_FLOW_NORMALIZATION_EXPONENT", ["wallet", "pallet", "sudo", "exponent"]
+)  # args: [exponent: U64F64]  | Pallet: AdminUtils
+SUDO_SET_TAO_FLOW_SMOOTHING_FACTOR = namedtuple(
+    "SUDO_SET_TAO_FLOW_SMOOTHING_FACTOR",
+    ["wallet", "pallet", "sudo", "smoothing_factor"],
+)  # args: [smoothing_factor: u64]  | Pallet: AdminUtils
 SUDO_SET_TARGET_REGISTRATIONS_PER_INTERVAL = namedtuple(
     "SUDO_SET_TARGET_REGISTRATIONS_PER_INTERVAL",
     ["wallet", "pallet", "sudo", "netuid", "target_registrations_per_interval"],
@@ -230,7 +278,7 @@ SUDO_SET_TOGGLE_TRANSFER = namedtuple(
 )  # args: [netuid: NetUid, toggle: bool]  | Pallet: AdminUtils
 SUDO_SET_TOTAL_ISSUANCE = namedtuple(
     "SUDO_SET_TOTAL_ISSUANCE", ["wallet", "pallet", "sudo", "total_issuance"]
-)  # args: [total_issuance: TaoCurrency]  | Pallet: AdminUtils
+)  # args: [total_issuance: TaoBalance]  | Pallet: AdminUtils
 SUDO_SET_TX_CHILDKEY_TAKE_RATE_LIMIT = namedtuple(
     "SUDO_SET_TX_CHILDKEY_TAKE_RATE_LIMIT",
     ["wallet", "pallet", "sudo", "tx_rate_limit"],
@@ -242,6 +290,9 @@ SUDO_SET_TX_DELEGATE_TAKE_RATE_LIMIT = namedtuple(
 SUDO_SET_TX_RATE_LIMIT = namedtuple(
     "SUDO_SET_TX_RATE_LIMIT", ["wallet", "pallet", "sudo", "tx_rate_limit"]
 )  # args: [tx_rate_limit: u64]  | Pallet: AdminUtils
+SUDO_SET_VOTING_POWER_EMA_ALPHA = namedtuple(
+    "SUDO_SET_VOTING_POWER_EMA_ALPHA", ["wallet", "pallet", "sudo", "netuid", "alpha"]
+)  # args: [netuid: NetUid, alpha: u64]  | Pallet: SubtensorModule
 SUDO_SET_WEIGHTS_SET_RATE_LIMIT = namedtuple(
     "SUDO_SET_WEIGHTS_SET_RATE_LIMIT",
     ["wallet", "pallet", "sudo", "netuid", "weights_set_rate_limit"],

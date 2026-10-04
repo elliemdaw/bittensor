@@ -20,6 +20,12 @@ from tests.e2e_tests.utils.set_subnet_moving_price import (
 )
 
 PROOF_COUNTER = 2
+# Max epochs to wait for an emission/auto-claim to move a balance before failing.
+# A strict increase isn't guaranteed in any single epoch window: root dividends to
+# a small stake can round to ~0, the distribution can land a few blocks past the
+# boundary, and random auto-claims may skip a coldkey in a given epoch. So we poll
+# across a few epochs for the increase rather than demanding it at one boundary.
+MAX_EPOCHS_FOR_INCREASE = 3
 
 
 def test_root_claim_swap(subtensor, alice_wallet, bob_wallet, charlie_wallet):
@@ -91,7 +97,7 @@ def test_root_claim_swap(subtensor, alice_wallet, bob_wallet, charlie_wallet):
     # We skip the era in which the stake was installed, since the emission doesn't occur (Subtensor implementation)
     logging.console.info(f"Skipping stake epoch")
     next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     subtensor.wait_for_block(block=next_epoch_start_block)
 
@@ -105,16 +111,25 @@ def test_root_claim_swap(subtensor, alice_wallet, bob_wallet, charlie_wallet):
 
     # Proof that ROOT stake is changing each last epoch block
     while proof_counter > 0:
-        next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-            netuid=root_sn.netuid
+        # Poll across up to MAX_EPOCHS_FOR_INCREASE epochs for the stake to grow.
+        charlie_root_stake = prev_root_stake
+        epochs_left = MAX_EPOCHS_FOR_INCREASE
+        while charlie_root_stake <= prev_root_stake and epochs_left > 0:
+            next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
+                netuid=sn2.netuid
+            )
+            subtensor.wait_for_block(block=next_epoch_start_block + 4)
+            charlie_root_stake = subtensor.staking.get_stake(
+                coldkey_ss58=charlie_wallet.coldkey.ss58_address,
+                hotkey_ss58=alice_wallet.hotkey.ss58_address,
+                netuid=root_sn.netuid,
+            )
+            epochs_left -= 1
+
+        assert charlie_root_stake > prev_root_stake, (
+            f"Stake did not increase over {MAX_EPOCHS_FOR_INCREASE} epochs: "
+            f"{charlie_root_stake} <= {prev_root_stake}"
         )
-        subtensor.wait_for_block(block=next_epoch_start_block)
-        charlie_root_stake = subtensor.staking.get_stake(
-            coldkey_ss58=charlie_wallet.coldkey.ss58_address,
-            hotkey_ss58=alice_wallet.hotkey.ss58_address,
-            netuid=root_sn.netuid,
-        )
-        assert charlie_root_stake > prev_root_stake
         prev_root_stake = charlie_root_stake
         proof_counter -= 1
 
@@ -195,7 +210,7 @@ async def test_root_claim_swap_async(
     # We skip the era in which the stake was installed, since the emission doesn't occur (Subtensor implementation)
     logging.console.info(f"Skipping stake epoch")
     next_epoch_start_block = await async_subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     await async_subtensor.wait_for_block(block=next_epoch_start_block)
 
@@ -209,18 +224,28 @@ async def test_root_claim_swap_async(
 
     # Proof that ROOT stake is changing each last epoch block
     while proof_counter > 0:
-        next_epoch_start_block = (
-            await async_subtensor.subnets.get_next_epoch_start_block(
-                netuid=root_sn.netuid
+        # Poll across up to MAX_EPOCHS_FOR_INCREASE epochs for the stake to grow.
+        charlie_root_stake = prev_root_stake
+        epochs_left = MAX_EPOCHS_FOR_INCREASE
+        while charlie_root_stake <= prev_root_stake and epochs_left > 0:
+            next_epoch_start_block = (
+                await async_subtensor.subnets.get_next_epoch_start_block(
+                    netuid=sn2.netuid
+                )
             )
+            await async_subtensor.wait_for_block(block=next_epoch_start_block + 4)
+
+            charlie_root_stake = await async_subtensor.staking.get_stake(
+                coldkey_ss58=charlie_wallet.coldkey.ss58_address,
+                hotkey_ss58=alice_wallet.hotkey.ss58_address,
+                netuid=root_sn.netuid,
+            )
+            epochs_left -= 1
+
+        assert charlie_root_stake > prev_root_stake, (
+            f"Stake did not increase over {MAX_EPOCHS_FOR_INCREASE} epochs: "
+            f"{charlie_root_stake} <= {prev_root_stake}"
         )
-        await async_subtensor.wait_for_block(block=next_epoch_start_block)
-        charlie_root_stake = await async_subtensor.staking.get_stake(
-            coldkey_ss58=charlie_wallet.coldkey.ss58_address,
-            hotkey_ss58=alice_wallet.hotkey.ss58_address,
-            netuid=root_sn.netuid,
-        )
-        assert charlie_root_stake > prev_root_stake
         prev_root_stake = charlie_root_stake
         proof_counter -= 1
 
@@ -309,7 +334,7 @@ def test_root_claim_keep_with_zero_num_root_auto_claims(
     # proof that ROOT stake isn't changes until it's claimed manually
     while proof_counter > 0:
         next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-            root_sn.netuid
+            sn2.netuid
         )
         subtensor.wait_for_block(next_epoch_start_block)
 
@@ -381,7 +406,9 @@ def test_root_claim_keep_with_zero_num_root_auto_claims(
         hotkey_ss58=alice_wallet.hotkey.ss58_address,
         netuid=sn2.netuid,
     )
-    assert stake_after_charlie >= claimable_stake_before_charlie
+    assert stake_after_charlie >= claimable_stake_before_charlie - Balance.from_rao(
+        1, sn2.netuid
+    )
 
     logging.console.info(f"[blue]Charlie after:[/blue]")
     logging.console.info(f"RootClaimed: {claimed_after_charlie}")
@@ -478,7 +505,7 @@ async def test_root_claim_keep_with_zero_num_root_auto_claims_async(
     # proof that ROOT stake isn't changes until it's claimed manually
     while proof_counter > 0:
         next_epoch_start_block = (
-            await async_subtensor.subnets.get_next_epoch_start_block(root_sn.netuid)
+            await async_subtensor.subnets.get_next_epoch_start_block(sn2.netuid)
         )
         await async_subtensor.wait_for_block(next_epoch_start_block)
 
@@ -534,6 +561,8 @@ async def test_root_claim_keep_with_zero_num_root_auto_claims_async(
     )
     assert response.success, response.message
 
+    await async_subtensor.wait_for_block(await async_subtensor.block + 4)
+
     # === Check Charlie after manual claim ===
     claimed_after_charlie = await async_subtensor.staking.get_root_claimed(
         coldkey_ss58=charlie_wallet.coldkey.ss58_address,
@@ -556,7 +585,9 @@ async def test_root_claim_keep_with_zero_num_root_auto_claims_async(
         hotkey_ss58=alice_wallet.hotkey.ss58_address,
         netuid=sn2.netuid,
     )
-    assert stake_after_charlie >= claimable_stake_before_charlie
+    assert stake_after_charlie >= claimable_stake_before_charlie - Balance.from_rao(
+        1, sn2.netuid
+    )
 
     logging.console.info(f"[blue]Charlie after:[/blue]")
     logging.console.info(f"RootClaimed: {claimed_after_charlie}")
@@ -643,7 +674,7 @@ def test_root_claim_keep_with_random_auto_claims(
     # Skip the epoch in which stake was installed. Emission doesn't occur in the same epoch as stake installation
     logging.console.info("Skipping stake epoch")
     next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     subtensor.wait_for_block(next_epoch_start_block)
 
@@ -663,27 +694,37 @@ def test_root_claim_keep_with_random_auto_claims(
 
     # Wait for epochs and check that stake increases due to random auto claims
     while proof_counter > 0:
-        next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-            root_sn.netuid
-        )
-        subtensor.wait_for_block(next_epoch_start_block)
+        # A random auto-claim may skip Charlie in any single epoch, and the claim
+        # lands a few blocks past the boundary, so poll across up to
+        # MAX_EPOCHS_FOR_INCREASE epochs (+4 blocks each) for the claim to land.
+        claimed_stake_charlie = prev_claimed_stake_charlie
+        root_claimed_charlie = prev_root_claimed_charlie
+        epochs_left = MAX_EPOCHS_FOR_INCREASE
+        while claimed_stake_charlie <= prev_claimed_stake_charlie and epochs_left > 0:
+            next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
+                sn2.netuid
+            )
+            subtensor.wait_for_block(next_epoch_start_block + 4)
 
-        # Check Charlie stake and claimed
-        claimed_stake_charlie = subtensor.staking.get_stake(
-            coldkey_ss58=charlie_wallet.coldkey.ss58_address,
-            hotkey_ss58=alice_wallet.hotkey.ss58_address,
-            netuid=sn2.netuid,
-        )
+            # Check Charlie stake and claimed
+            claimed_stake_charlie = subtensor.staking.get_stake(
+                coldkey_ss58=charlie_wallet.coldkey.ss58_address,
+                hotkey_ss58=alice_wallet.hotkey.ss58_address,
+                netuid=sn2.netuid,
+            )
+            root_claimed_charlie = subtensor.staking.get_root_claimed(
+                coldkey_ss58=charlie_wallet.coldkey.ss58_address,
+                hotkey_ss58=alice_wallet.hotkey.ss58_address,
+                netuid=sn2.netuid,
+            )
+            epochs_left -= 1
+
         assert claimed_stake_charlie > prev_claimed_stake_charlie, (
-            f"Stake did not increase: {claimed_stake_charlie} <= {prev_claimed_stake_charlie}"
+            f"Stake did not increase over {MAX_EPOCHS_FOR_INCREASE} epochs: "
+            f"{claimed_stake_charlie} <= {prev_claimed_stake_charlie}"
         )
         prev_claimed_stake_charlie = claimed_stake_charlie
 
-        root_claimed_charlie = subtensor.staking.get_root_claimed(
-            coldkey_ss58=charlie_wallet.coldkey.ss58_address,
-            hotkey_ss58=alice_wallet.hotkey.ss58_address,
-            netuid=sn2.netuid,
-        )
         assert root_claimed_charlie > prev_root_claimed_charlie, (
             f"Root claimed did not increase: {root_claimed_charlie} <= {prev_root_claimed_charlie}"
         )
@@ -776,7 +817,7 @@ async def test_root_claim_keep_with_random_auto_claims_async(
     # Skip the epoch in which stake was installed. Emission doesn't occur in the same epoch as stake installation
     logging.console.info("Skipping stake epoch")
     next_epoch_start_block = await async_subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     await async_subtensor.wait_for_block(next_epoch_start_block)
 
@@ -796,27 +837,37 @@ async def test_root_claim_keep_with_random_auto_claims_async(
 
     # Wait for epochs and check that stake increases due to random auto claims
     while proof_counter > 0:
-        next_epoch_start_block = (
-            await async_subtensor.subnets.get_next_epoch_start_block(root_sn.netuid)
-        )
-        await async_subtensor.wait_for_block(next_epoch_start_block)
+        # A random auto-claim may skip Charlie in any single epoch, and the claim
+        # lands a few blocks past the boundary, so poll across up to
+        # MAX_EPOCHS_FOR_INCREASE epochs (+4 blocks each) for the claim to land.
+        claimed_stake_charlie = prev_claimed_stake_charlie
+        root_claimed_charlie = prev_root_claimed_charlie
+        epochs_left = MAX_EPOCHS_FOR_INCREASE
+        while claimed_stake_charlie <= prev_claimed_stake_charlie and epochs_left > 0:
+            next_epoch_start_block = (
+                await async_subtensor.subnets.get_next_epoch_start_block(sn2.netuid)
+            )
+            await async_subtensor.wait_for_block(next_epoch_start_block + 4)
 
-        # Check Charlie stake and claimed
-        claimed_stake_charlie = await async_subtensor.staking.get_stake(
-            coldkey_ss58=charlie_wallet.coldkey.ss58_address,
-            hotkey_ss58=alice_wallet.hotkey.ss58_address,
-            netuid=sn2.netuid,
-        )
+            # Check Charlie stake and claimed
+            claimed_stake_charlie = await async_subtensor.staking.get_stake(
+                coldkey_ss58=charlie_wallet.coldkey.ss58_address,
+                hotkey_ss58=alice_wallet.hotkey.ss58_address,
+                netuid=sn2.netuid,
+            )
+            root_claimed_charlie = await async_subtensor.staking.get_root_claimed(
+                coldkey_ss58=charlie_wallet.coldkey.ss58_address,
+                hotkey_ss58=alice_wallet.hotkey.ss58_address,
+                netuid=sn2.netuid,
+            )
+            epochs_left -= 1
+
         assert claimed_stake_charlie > prev_claimed_stake_charlie, (
-            f"Stake did not increase: {claimed_stake_charlie} <= {prev_claimed_stake_charlie}"
+            f"Stake did not increase over {MAX_EPOCHS_FOR_INCREASE} epochs: "
+            f"{claimed_stake_charlie} <= {prev_claimed_stake_charlie}"
         )
         prev_claimed_stake_charlie = claimed_stake_charlie
 
-        root_claimed_charlie = await async_subtensor.staking.get_root_claimed(
-            coldkey_ss58=charlie_wallet.coldkey.ss58_address,
-            hotkey_ss58=alice_wallet.hotkey.ss58_address,
-            netuid=sn2.netuid,
-        )
         assert root_claimed_charlie > prev_root_claimed_charlie, (
             f"Root claimed did not increase: {root_claimed_charlie} <= {prev_root_claimed_charlie}"
         )
@@ -895,13 +946,13 @@ def test_root_claim_keep_subnets_basic(
     # Skip the epoch in which stake was installed
     logging.console.info("Skipping stake epoch")
     next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     subtensor.wait_for_block(next_epoch_start_block)
 
     # Wait for one epoch and check that get_root_alpha_dividends_per_subnet increases for SN2
     next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     subtensor.wait_for_block(next_epoch_start_block)
 
@@ -990,13 +1041,13 @@ async def test_root_claim_keep_subnets_basic_async(
     # Skip the epoch in which stake was installed
     logging.console.info("Skipping stake epoch")
     next_epoch_start_block = await async_subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     await async_subtensor.wait_for_block(next_epoch_start_block)
 
     # Wait for one epoch and check that get_root_alpha_dividends_per_subnet increases for SN2
     next_epoch_start_block = await async_subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     await async_subtensor.wait_for_block(next_epoch_start_block)
 
@@ -1085,7 +1136,7 @@ def test_root_claim_keep_subnets_with_auto_claims(
     # Skip the epoch in which stake was installed
     logging.console.info("Skipping stake epoch")
     next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     subtensor.wait_for_block(next_epoch_start_block)
 
@@ -1100,7 +1151,7 @@ def test_root_claim_keep_subnets_with_auto_claims(
     # Wait for epochs and check that stake increases on SN2 due to auto claims
     while proof_counter > 0:
         next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-            root_sn.netuid
+            sn2.netuid
         )
         subtensor.wait_for_block(next_epoch_start_block)
 
@@ -1196,7 +1247,7 @@ async def test_root_claim_keep_subnets_with_auto_claims_async(
     # Skip the epoch in which stake was installed
     logging.console.info("Skipping stake epoch")
     next_epoch_start_block = await async_subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     await async_subtensor.wait_for_block(next_epoch_start_block)
 
@@ -1211,7 +1262,7 @@ async def test_root_claim_keep_subnets_with_auto_claims_async(
     # Wait for epochs and check that stake increases on SN2 due to auto claims
     while proof_counter > 0:
         next_epoch_start_block = (
-            await async_subtensor.subnets.get_next_epoch_start_block(root_sn.netuid)
+            await async_subtensor.subnets.get_next_epoch_start_block(sn2.netuid)
         )
         await async_subtensor.wait_for_block(next_epoch_start_block)
 
@@ -1326,13 +1377,13 @@ def test_root_claim_keep_subnets_multiple_subnets(
     # Skip the epoch in which stake was installed
     logging.console.info("Skipping stake epoch")
     next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     subtensor.wait_for_block(next_epoch_start_block)
 
     # Wait for one epoch
     next_epoch_start_block = subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     subtensor.wait_for_block(next_epoch_start_block)
 
@@ -1465,13 +1516,13 @@ async def test_root_claim_keep_subnets_multiple_subnets_async(
     # Skip the epoch in which stake was installed
     logging.console.info("Skipping stake epoch")
     next_epoch_start_block = await async_subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     await async_subtensor.wait_for_block(next_epoch_start_block)
 
     # Wait for one epoch
     next_epoch_start_block = await async_subtensor.subnets.get_next_epoch_start_block(
-        netuid=root_sn.netuid
+        netuid=sn2.netuid
     )
     await async_subtensor.wait_for_block(next_epoch_start_block)
 

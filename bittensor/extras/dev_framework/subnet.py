@@ -1,5 +1,4 @@
 from typing import Optional, Union
-from collections import namedtuple
 from bittensor_wallet import Wallet
 
 from bittensor.core.extrinsics.asyncex.utils import (
@@ -10,7 +9,7 @@ from bittensor.core.settings import DEFAULT_PERIOD
 from bittensor.core.types import ExtrinsicResponse
 from bittensor.extras import SubtensorApi
 from bittensor.utils.btlogging import logging
-from .calls import *  # noqa: F401#
+from .calls import *  #  noqa: F403
 from .utils import (
     is_instance_namedtuple,
     split_command,
@@ -259,9 +258,7 @@ class TestSubnet:
         """Activate subnet."""
         self._check_netuid()
         current_block = self.s.block
-        activation_block = self.s.queries.query_constant(
-            "SubtensorModule", "DurationOfStartCall"
-        ).value
+        activation_block = self.s.chain.get_start_call_delay()
         # added 10 blocks bc 2.5 seconds is not always enough for the chain to update.
         self.s.wait_for_block(current_block + activation_block + 1)
         response = self.s.subnets.start_call(
@@ -292,11 +289,7 @@ class TestSubnet:
         """Activate subnet."""
         self._check_netuid()
         current_block = await self.s.block
-        activation_block = (
-            await self.s.queries.query_constant(
-                "SubtensorModule", "DurationOfStartCall"
-            )
-        ).value
+        activation_block = await self.s.chain.get_start_call_delay()
         # added 10 blocks bc 2.5 seconds is not always enough for the chain to update.
         await self.s.wait_for_block(current_block + activation_block + 1)
 

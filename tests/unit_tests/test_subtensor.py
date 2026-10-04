@@ -6,9 +6,10 @@ from unittest.mock import ANY, MagicMock
 import pytest
 import websockets
 from async_substrate_interface import sync_substrate
-from async_substrate_interface.types import Runtime, ScaleObj
+from async_substrate_interface.types import Runtime
 from bittensor_wallet import Wallet
 from scalecodec import GenericCall
+from scalecodec.base import ScaleType
 
 from bittensor import StakeInfo
 from bittensor.core import settings
@@ -38,6 +39,16 @@ U64_MAX = 18446744073709551615
 @pytest.fixture
 def fake_call_params():
     return call_params()
+
+
+@pytest.fixture
+def scale_type_none(mocker):
+    return mocker.Mock(spec=ScaleType, value=None)
+
+
+@pytest.fixture
+def scale_type(mocker):
+    return mocker.Mock(spec=ScaleType)
 
 
 def call_params():
@@ -290,10 +301,10 @@ def test_hyperparameter_subnet_does_not_exist(subtensor, mocker):
     subtensor.subnet_exists.assert_called_once_with(1, block=None)
 
 
-def test_hyperparameter_result_is_none(subtensor, mocker):
+def test_hyperparameter_result_is_none(subtensor, mocker, scale_type_none):
     """Tests when query_subtensor returns None."""
     subtensor.subnet_exists = mocker.MagicMock(return_value=True)
-    subtensor.substrate.query = mocker.MagicMock(return_value=None)
+    subtensor.substrate.query = mocker.MagicMock(return_value=scale_type_none)
     assert subtensor.get_hyperparameter("Difficulty", 1, None) is None
     subtensor.subnet_exists.assert_called_once_with(1, block=None)
     subtensor.substrate.query.assert_called_once_with(
@@ -304,10 +315,10 @@ def test_hyperparameter_result_is_none(subtensor, mocker):
     )
 
 
-def test_hyperparameter_result_has_no_value(subtensor, mocker):
+def test_hyperparameter_result_has_no_value(subtensor, mocker, scale_type_none):
     """Test when the result has no 'value' attribute."""
     subtensor.subnet_exists = mocker.MagicMock(return_value=True)
-    subtensor.substrate.query = mocker.MagicMock(return_value=None)
+    subtensor.substrate.query = mocker.MagicMock(return_value=scale_type_none)
     assert subtensor.get_hyperparameter("Difficulty", 1, None) is None
     subtensor.subnet_exists.assert_called_once_with(1, block=None)
     subtensor.substrate.query.assert_called_once_with(
@@ -543,7 +554,9 @@ def test_commit_reveal_enabled(subtensor, mocker):
     # Preps
     netuid = 1
     block = 123
-    mocked_get_hyperparameter = mocker.patch.object(subtensor, "get_hyperparameter")
+    mocked_get_hyperparameter = mocker.patch.object(
+        subtensor, "get_hyperparameter", return_value=False
+    )
 
     # Call
     result = subtensor.commit_reveal_enabled(netuid, block)
@@ -832,55 +845,45 @@ def test_get_subnets_no_block_specified(mocker, subtensor):
 
 # `get_subnet_hyperparameters` tests
 def test_get_subnet_hyperparameters_success(mocker, subtensor):
-    """Test get_subnet_hyperparameters returns correct data when hyperparameters are found."""
-    # Prep
+    """Test get_subnet_hyperparameters uses runtime fallback and from_any."""
     netuid = 1
     block = 123
+    block_hash = "0xabc"
 
+    fake_v3_entries = [
+        {"name": "tempo", "value": {"U16": 360}},
+        {"name": "kappa", "value": {"U16": 32767}},
+    ]
+    mocker.patch.object(subtensor, "determine_block_hash", return_value=block_hash)
     mocker.patch.object(
-        subtensor,
-        "query_runtime_api",
+        subtensor, "_runtime_call_with_fallback", return_value=fake_v3_entries
     )
-    mocker.patch.object(
-        subtensor_module.SubnetHyperparameters,
-        "from_dict",
-    )
+    mocker.patch.object(subtensor_module.SubnetHyperparameters, "from_any")
 
-    # Call
     subtensor.get_subnet_hyperparameters(netuid, block)
 
-    # Asserts
-    subtensor.query_runtime_api.assert_called_once_with(
-        runtime_api="SubnetInfoRuntimeApi",
-        method="get_subnet_hyperparams_v2",
-        params=[netuid],
-        block=block,
+    subtensor._runtime_call_with_fallback.assert_called_once_with(
+        ("SubnetInfoRuntimeApi", "get_subnet_hyperparams_v3", [netuid]),
+        ("SubnetInfoRuntimeApi", "get_subnet_hyperparams_v2", [netuid]),
+        ("SubnetInfoRuntimeApi", "get_subnet_hyperparams", [netuid]),
+        block_hash=block_hash,
+        default_value=None,
     )
-    subtensor_module.SubnetHyperparameters.from_dict.assert_called_once_with(
-        subtensor.query_runtime_api.return_value,
+    subtensor_module.SubnetHyperparameters.from_any.assert_called_once_with(
+        fake_v3_entries
     )
 
 
 def test_get_subnet_hyperparameters_no_data(mocker, subtensor):
-    """Test get_subnet_hyperparameters returns empty list when no data is found."""
-    # Prep
+    """Test get_subnet_hyperparameters returns None when runtime call is empty."""
     netuid = 1
     block = 123
-    mocker.patch.object(subtensor, "query_runtime_api", return_value=None)
-    mocker.patch.object(subtensor_module.SubnetHyperparameters, "from_dict")
+    mocker.patch.object(subtensor, "determine_block_hash", return_value="0xabc")
+    mocker.patch.object(subtensor, "_runtime_call_with_fallback", return_value=None)
 
-    # Call
     result = subtensor.get_subnet_hyperparameters(netuid, block)
 
-    # Asserts
     assert result is None
-    subtensor.query_runtime_api.assert_called_once_with(
-        runtime_api="SubnetInfoRuntimeApi",
-        method="get_subnet_hyperparams_v2",
-        params=[netuid],
-        block=block,
-    )
-    subtensor_module.SubnetHyperparameters.from_dict.assert_not_called()
 
 
 def test_query_subtensor(subtensor, mocker):
@@ -911,10 +914,6 @@ def test_query_runtime_api(subtensor, mocker):
         subtensor,
         "determine_block_hash",
     )
-    # mock_runtime_call = mocker.patch.object(
-    #     subtensor.substrate,
-    #     "runtime_call",
-    # )
 
     # Call
     result = subtensor.query_runtime_api(fake_runtime_api, fake_method, None)
@@ -928,7 +927,7 @@ def test_query_runtime_api(subtensor, mocker):
     )
     mock_determine_block_hash.assert_called_once_with(None)
 
-    assert result == subtensor.substrate.runtime_call.return_value.value
+    assert result == subtensor.substrate.runtime_call.return_value
 
 
 def test_query_map_subtensor(subtensor, mocker):
@@ -1371,7 +1370,7 @@ def test_neuron_for_uid_response_none(subtensor, mocker):
         subtensor_module.NeuronInfo, "get_null_neuron"
     )
 
-    subtensor.substrate.runtime_call.return_value.value = None
+    subtensor.substrate.runtime_call.return_value = None
 
     # Call
     result = subtensor.neuron_for_uid(
@@ -1501,10 +1500,7 @@ def test_get_commitment(subtensor, mocker):
     fake_uid = 2
     fake_block = 3
     fake_hotkey = "hotkey"
-    expected_result = (
-        "{'peer_id': '12D3KooWFWnHBmUFxvfL6PfZ5eGHdhgsEqNnsxuN1HE9EtfW8THi', "
-        "'model_huggingface_id': 'kmfoda/gpt2-1b-miner-3'}"
-    )
+    expected_result = "{'peer_id': '12D3KooWRNw54AW4zrQWeZL2buhU8P71gfo9PXQQAHUwEAe4hA34', 'model_huggingface_id': None}"
 
     mocked_metagraph = mocker.MagicMock()
     subtensor.metagraph = mocked_metagraph
@@ -1515,133 +1511,11 @@ def test_get_commitment(subtensor, mocker):
         "deposit": 0,
         "block": 3843930,
         "info": {
-            "fields": (
-                (
-                    {
-                        "Raw117": (
-                            (
-                                123,
-                                39,
-                                112,
-                                101,
-                                101,
-                                114,
-                                95,
-                                105,
-                                100,
-                                39,
-                                58,
-                                32,
-                                39,
-                                49,
-                                50,
-                                68,
-                                51,
-                                75,
-                                111,
-                                111,
-                                87,
-                                70,
-                                87,
-                                110,
-                                72,
-                                66,
-                                109,
-                                85,
-                                70,
-                                120,
-                                118,
-                                102,
-                                76,
-                                54,
-                                80,
-                                102,
-                                90,
-                                53,
-                                101,
-                                71,
-                                72,
-                                100,
-                                104,
-                                103,
-                                115,
-                                69,
-                                113,
-                                78,
-                                110,
-                                115,
-                                120,
-                                117,
-                                78,
-                                49,
-                                72,
-                                69,
-                                57,
-                                69,
-                                116,
-                                102,
-                                87,
-                                56,
-                                84,
-                                72,
-                                105,
-                                39,
-                                44,
-                                32,
-                                39,
-                                109,
-                                111,
-                                100,
-                                101,
-                                108,
-                                95,
-                                104,
-                                117,
-                                103,
-                                103,
-                                105,
-                                110,
-                                103,
-                                102,
-                                97,
-                                99,
-                                101,
-                                95,
-                                105,
-                                100,
-                                39,
-                                58,
-                                32,
-                                39,
-                                107,
-                                109,
-                                102,
-                                111,
-                                100,
-                                97,
-                                47,
-                                103,
-                                112,
-                                116,
-                                50,
-                                45,
-                                49,
-                                98,
-                                45,
-                                109,
-                                105,
-                                110,
-                                101,
-                                114,
-                                45,
-                                51,
-                                39,
-                                125,
-                            ),
-                        )
-                    },
-                ),
-            )
+            "fields": [
+                {
+                    "Raw97": "0x7b27706565725f6964273a2027313244334b6f6f57524e7735344157347a725157655a4c32627568553850373167666f3950585151414855774541653468413334272c20276d6f64656c5f68756767696e67666163655f6964273a204e6f6e657d"
+                }
+            ],
         },
     }
 
@@ -1663,7 +1537,6 @@ def test_get_last_commitment_bonds_reset_block(subtensor, mocker):
     fake_hotkey = "hotkey"
 
     mocked_get_last_bonds_reset = mocker.patch.object(subtensor, "get_last_bonds_reset")
-    mocked_decode_block = mocker.patch.object(subtensor_module, "decode_block")
 
     mocked_metagraph = mocker.MagicMock()
     subtensor.metagraph = mocked_metagraph
@@ -1677,10 +1550,6 @@ def test_get_last_commitment_bonds_reset_block(subtensor, mocker):
     # Assertions
     mocked_metagraph.assert_called_once_with(fake_netuid, block=None)
     mocked_get_last_bonds_reset.assert_called_once_with(fake_netuid, fake_hotkey, None)
-    mocked_decode_block.assert_called_once_with(
-        mocked_get_last_bonds_reset.return_value
-    )
-    assert result == mocked_decode_block.return_value
 
 
 def test_min_allowed_weights(subtensor, mocker):
@@ -1787,6 +1656,111 @@ def test_get_existential_deposit(subtensor, mocker):
     assert result == Balance.from_rao(value)
 
 
+def test_get_max_activity_cutoff_factor_milli(subtensor, mocker):
+    """Successful get_max_activity_cutoff_factor_milli call."""
+    # Prep
+    block = 123
+    mocked_query_constant = mocker.MagicMock()
+    mocked_query_constant.return_value.value = 50_000
+    subtensor.substrate.get_constant = mocked_query_constant
+
+    # Call
+    result = subtensor.get_max_activity_cutoff_factor_milli(block=block)
+
+    # Assertions
+    mocked_query_constant.assert_called_once_with(
+        module_name="SubtensorModule",
+        constant_name="MaxActivityCutoffFactorMilli",
+        block_hash=subtensor.substrate.get_block_hash.return_value,
+    )
+    subtensor.substrate.get_block_hash.assert_called_once_with(block)
+    assert result == 50_000
+
+
+def test_get_max_epochs_per_block(subtensor, mocker):
+    """Successful get_max_epochs_per_block call."""
+    # Prep
+    block = 123
+    mocked_query_constant = mocker.MagicMock()
+    mocked_query_constant.return_value.value = 32
+    subtensor.substrate.get_constant = mocked_query_constant
+
+    # Call
+    result = subtensor.get_max_epochs_per_block(block=block)
+
+    # Assertions
+    mocked_query_constant.assert_called_once_with(
+        module_name="SubtensorModule",
+        constant_name="MaxEpochsPerBlock",
+        block_hash=subtensor.substrate.get_block_hash.return_value,
+    )
+    subtensor.substrate.get_block_hash.assert_called_once_with(block)
+    assert result == 32
+
+
+def test_get_max_tempo(subtensor, mocker):
+    """Successful get_max_tempo call."""
+    # Prep
+    block = 123
+    mocked_query_constant = mocker.MagicMock()
+    mocked_query_constant.return_value.value = 50_400
+    subtensor.substrate.get_constant = mocked_query_constant
+
+    # Call
+    result = subtensor.get_max_tempo(block=block)
+
+    # Assertions
+    mocked_query_constant.assert_called_once_with(
+        module_name="SubtensorModule",
+        constant_name="MaxTempo",
+        block_hash=subtensor.substrate.get_block_hash.return_value,
+    )
+    subtensor.substrate.get_block_hash.assert_called_once_with(block)
+    assert result == 50_400
+
+
+def test_get_min_activity_cutoff_factor_milli(subtensor, mocker):
+    """Successful get_min_activity_cutoff_factor_milli call."""
+    # Prep
+    block = 123
+    mocked_query_constant = mocker.MagicMock()
+    mocked_query_constant.return_value.value = 1_000
+    subtensor.substrate.get_constant = mocked_query_constant
+
+    # Call
+    result = subtensor.get_min_activity_cutoff_factor_milli(block=block)
+
+    # Assertions
+    mocked_query_constant.assert_called_once_with(
+        module_name="SubtensorModule",
+        constant_name="MinActivityCutoffFactorMilli",
+        block_hash=subtensor.substrate.get_block_hash.return_value,
+    )
+    subtensor.substrate.get_block_hash.assert_called_once_with(block)
+    assert result == 1_000
+
+
+def test_get_min_tempo(subtensor, mocker):
+    """Successful get_min_tempo call."""
+    # Prep
+    block = 123
+    mocked_query_constant = mocker.MagicMock()
+    mocked_query_constant.return_value.value = 360
+    subtensor.substrate.get_constant = mocked_query_constant
+
+    # Call
+    result = subtensor.get_min_tempo(block=block)
+
+    # Assertions
+    mocked_query_constant.assert_called_once_with(
+        module_name="SubtensorModule",
+        constant_name="MinTempo",
+        block_hash=subtensor.substrate.get_block_hash.return_value,
+    )
+    subtensor.substrate.get_block_hash.assert_called_once_with(block)
+    assert result == 360
+
+
 def test_reveal_weights(subtensor, fake_wallet, mocker):
     """Successful test_reveal_weights call."""
     # Preps
@@ -1830,6 +1804,99 @@ def test_reveal_weights(subtensor, fake_wallet, mocker):
         mechid=0,
         wait_for_revealed_execution=True,
     )
+
+
+def test_commit_weights_forwards_version_key(subtensor, fake_wallet, mocker):
+    """Regression: commit_weights must forward the caller's version_key to the
+    extrinsic. If dropped, the commit hash is built with the default version_key
+    and a reveal made with the intended version_key mismatches on-chain."""
+    # Preps
+    netuid = 1
+    uids = [1, 2, 3, 4]
+    weights = [10, 20, 30, 40]
+    salt = [4, 2, 2, 1]
+    custom_version_key = version_as_int + 1
+    mocked_extrinsic = mocker.patch.object(
+        subtensor_module,
+        "commit_weights_extrinsic",
+        return_value=ExtrinsicResponse(True, None),
+    )
+
+    # Call
+    subtensor.commit_weights(
+        wallet=fake_wallet,
+        netuid=netuid,
+        uids=uids,
+        weights=weights,
+        salt=salt,
+        version_key=custom_version_key,
+    )
+
+    # Assertions
+    assert mocked_extrinsic.call_count == 1
+    assert mocked_extrinsic.call_args.kwargs["version_key"] == custom_version_key
+
+
+@pytest.mark.parametrize(
+    "version_key",
+    [version_as_int, version_as_int + 7],
+    ids=["default_version_key", "custom_version_key"],
+)
+def test_commit_weights_hash_matches_reveal(
+    subtensor, fake_wallet, mocker, version_key
+):
+    """Symptom-level: the commit hash built by commit_weights(version_key=X) must equal
+    the hash the chain recomputes at reveal for the same inputs and X (reveal_weights
+    forwards version_key). Pre-fix, commit dropped X and hashed with the default, so a
+    custom X produced a mismatching commit hash that a reveal would be rejected against."""
+    from bittensor.utils.weight_utils import generate_weight_hash as real_ghash
+
+    fake_wallet.hotkey.ss58_address = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+    uids = [1, 2, 3]
+    weights = [10, 20, 30]
+    salt = [4, 2, 2, 1]
+
+    captured = {}
+
+    def spy(**kwargs):
+        result = real_ghash(**kwargs)
+        captured.update(kwargs)
+        captured["result"] = result
+        return result
+
+    mocker.patch(
+        "bittensor.core.extrinsics.weights.generate_weight_hash", side_effect=spy
+    )
+    # Neutralize wallet unlock + chain submission so the extrinsic runs through hashing.
+    mocker.patch.object(
+        ExtrinsicResponse, "unlock_wallet", return_value=mocker.Mock(success=True)
+    )
+    mocker.patch("bittensor.core.extrinsics.weights.SubtensorModule")
+    mocker.patch.object(
+        subtensor, "sign_and_send_extrinsic", return_value=ExtrinsicResponse(True, None)
+    )
+
+    # Call (force the non-MEV path).
+    subtensor.commit_weights(
+        wallet=fake_wallet,
+        netuid=1,
+        uids=uids,
+        weights=weights,
+        salt=salt,
+        version_key=version_key,
+        mev_protection=False,
+    )
+
+    # Hash actually committed by commit_weights ...
+    commit_hash = captured["result"]
+    # ... vs the hash the chain recomputes at reveal for the same inputs + intended
+    # version_key (reusing the exact non-version_key args the commit path passed).
+    reveal_args = {
+        k: v for k, v in captured.items() if k not in ("version_key", "result")
+    }
+    reveal_hash = real_ghash(**reveal_args, version_key=version_key)
+
+    assert commit_hash == reveal_hash
 
 
 def test_reveal_weights_false(subtensor, fake_wallet, mocker):
@@ -1920,28 +1987,6 @@ def test_difficulty_success(subtensor, mocker):
     )
 
     assert result == int(mocked_get_hyperparameter.return_value)
-
-
-def test_difficulty_none(subtensor, mocker):
-    """Tests difficulty method with None result."""
-    # Preps
-    mocked_get_hyperparameter = mocker.patch.object(
-        subtensor, "get_hyperparameter", return_value=None
-    )
-    fake_netuid = 1
-    fake_block = 2
-
-    # Call
-    result = subtensor.difficulty(fake_netuid, fake_block)
-
-    # Asserts
-    mocked_get_hyperparameter.assert_called_once_with(
-        param_name="Difficulty",
-        netuid=fake_netuid,
-        block=fake_block,
-    )
-
-    assert result is None
 
 
 def test_recycle_success(subtensor, mocker):
@@ -2142,11 +2187,6 @@ def test_does_hotkey_exist_true(mocker, subtensor):
         "query",
         return_value=mocker.Mock(value=[fake_owner]),
     )
-    mocker.patch.object(
-        subtensor_module,
-        "decode_account_id",
-        return_value=fake_owner,
-    )
 
     # Call
     result = subtensor.does_hotkey_exist(fake_hotkey_ss58, block=fake_block)
@@ -2162,50 +2202,20 @@ def test_does_hotkey_exist_true(mocker, subtensor):
     assert result is True
 
 
-def test_does_hotkey_exist_no_value(mocker, subtensor):
-    """Test when query_subtensor returns no value."""
-    # Mock data
-    fake_hotkey_ss58 = "fake_hotkey"
-    fake_block = 123
-
-    # Mocks
-    mock_query_subtensor = mocker.patch.object(
-        subtensor.substrate, "query", return_value=None
-    )
-
-    # Call
-    result = subtensor.does_hotkey_exist(fake_hotkey_ss58, block=fake_block)
-
-    # Assertions
-    mock_query_subtensor.assert_called_once_with(
-        module="SubtensorModule",
-        storage_function="Owner",
-        params=[fake_hotkey_ss58],
-        block_hash=subtensor.substrate.get_block_hash.return_value,
-    )
-    subtensor.substrate.get_block_hash.assert_called_once_with(fake_block)
-    assert result is False
-
-
-def test_does_hotkey_exist_special_id(mocker, subtensor):
+def test_does_hotkey_exist_special_id(mocker, subtensor, scale_type):
     """Test when query_subtensor returns the special invalid owner identifier."""
     # Mock data
     fake_hotkey_ss58 = "fake_hotkey"
     fake_owner = "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM"
     fake_block = 123
+    scale_type.value = fake_owner
 
     # Mocks
     mock_query_subtensor = mocker.patch.object(
         subtensor.substrate,
         "query",
-        return_value=fake_owner,
+        return_value=scale_type,
     )
-    mocker.patch.object(
-        subtensor_module,
-        "decode_account_id",
-        return_value=fake_owner,
-    )
-
     # Call
     result = subtensor.does_hotkey_exist(fake_hotkey_ss58, block=fake_block)
 
@@ -2232,11 +2242,6 @@ def test_does_hotkey_exist_latest_block(mocker, subtensor):
         "query",
         return_value=mocker.Mock(value=[fake_owner]),
     )
-    mocker.patch.object(
-        subtensor_module,
-        "decode_account_id",
-        return_value=fake_owner,
-    )
 
     # Call
     result = subtensor.does_hotkey_exist(fake_hotkey_ss58)
@@ -2251,16 +2256,17 @@ def test_does_hotkey_exist_latest_block(mocker, subtensor):
     assert result is True
 
 
-def test_get_hotkey_owner_success(mocker, subtensor):
+def test_get_hotkey_owner_success(mocker, subtensor, scale_type):
     """Test when hotkey exists and owner is found."""
     # Mock data
     fake_hotkey_ss58 = "fake_hotkey"
     fake_coldkey_ss58 = "fake_coldkey"
     fake_block = 123
+    scale_type.value = fake_coldkey_ss58
 
     # Mocks
     mock_query_subtensor = mocker.patch.object(
-        subtensor.substrate, "query", return_value=fake_coldkey_ss58
+        subtensor.substrate, "query", return_value=scale_type
     )
     mock_does_hotkey_exist = mocker.patch.object(
         subtensor, "does_hotkey_exist", return_value=True
@@ -2281,37 +2287,6 @@ def test_get_hotkey_owner_success(mocker, subtensor):
     assert result == fake_coldkey_ss58
 
 
-def test_get_hotkey_owner_no_value(mocker, subtensor):
-    """Test when query_subtensor returns no value."""
-    # Mock data
-    fake_hotkey_ss58 = "fake_hotkey"
-    fake_block = 123
-
-    # Mocks
-    mock_query_subtensor = mocker.patch.object(
-        subtensor.substrate,
-        "query",
-        return_value=None,
-    )
-    mock_does_hotkey_exist = mocker.patch.object(
-        subtensor, "does_hotkey_exist", return_value=True
-    )
-
-    # Call
-    result = subtensor.get_hotkey_owner(fake_hotkey_ss58, block=fake_block)
-
-    # Assertions
-    mock_query_subtensor.assert_called_once_with(
-        module="SubtensorModule",
-        storage_function="Owner",
-        params=[fake_hotkey_ss58],
-        block_hash=subtensor.substrate.get_block_hash.return_value,
-    )
-    mock_does_hotkey_exist.assert_not_called()
-    subtensor.substrate.get_block_hash.assert_called_once_with(fake_block)
-    assert result is None
-
-
 def test_get_hotkey_owner_does_not_exist(mocker, subtensor):
     """Test when hotkey does not exist."""
     # Mock data
@@ -2326,11 +2301,6 @@ def test_get_hotkey_owner_does_not_exist(mocker, subtensor):
     )
     mock_does_hotkey_exist = mocker.patch.object(
         subtensor, "does_hotkey_exist", return_value=False
-    )
-    mocker.patch.object(
-        subtensor_module,
-        "decode_account_id",
-        return_value=fake_hotkey_ss58,
     )
 
     # Call
@@ -2348,15 +2318,16 @@ def test_get_hotkey_owner_does_not_exist(mocker, subtensor):
     assert result is None
 
 
-def test_get_hotkey_owner_latest_block(mocker, subtensor):
+def test_get_hotkey_owner_latest_block(mocker, subtensor, scale_type):
     """Test when no block is provided (latest block)."""
     # Mock data
     fake_hotkey_ss58 = "fake_hotkey"
     fake_coldkey_ss58 = "fake_coldkey"
+    scale_type.value = fake_coldkey_ss58
 
     # Mocks
     mock_query_subtensor = mocker.patch.object(
-        subtensor.substrate, "query", return_value=fake_coldkey_ss58
+        subtensor.substrate, "query", return_value=scale_type
     )
     mock_does_hotkey_exist = mocker.patch.object(
         subtensor, "does_hotkey_exist", return_value=True
@@ -2437,7 +2408,7 @@ def test_get_minimum_required_stake_invalid_result(mocker, subtensor):
     mock_query.assert_called_once_with(
         module="SubtensorModule", storage_function="NominatorMinRequiredStake"
     )
-    mock_balance_from_rao.assert_called_once_with(fake_invalid_stake)
+    mock_balance_from_rao.assert_called_once_with(0)
     assert result == mock_balance_from_rao.return_value
 
 
@@ -3096,7 +3067,9 @@ def test_get_all_neuron_certificates(mocker, subtensor):
 
 def test_get_timestamp(mocker, subtensor):
     fake_block = 1000
-    mocked_query = mocker.MagicMock(return_value=ScaleObj(1740586018 * 1000))
+    mock_return = mocker.MagicMock(spec=ScaleType)
+    mock_return.value = 1740586018 * 1000
+    mocked_query = mocker.MagicMock(return_value=mock_return)
     mocker.patch.object(subtensor.substrate, "query", mocked_query)
     expected_result = datetime.datetime(
         2025, 2, 26, 16, 6, 58, tzinfo=datetime.timezone.utc
@@ -3110,18 +3083,9 @@ def test_get_owned_hotkeys_happy_path(subtensor, mocker):
     # Prep
     fake_coldkey = "fake_hotkey"
     fake_hotkey = "fake_hotkey"
-    fake_hotkeys = [
-        [
-            fake_hotkey,
-        ]
-    ]
+    fake_hotkeys = mocker.MagicMock(spec=ScaleType, value=[fake_hotkey])
     mocked_subtensor = mocker.Mock(return_value=fake_hotkeys)
     mocker.patch.object(subtensor.substrate, "query", new=mocked_subtensor)
-
-    mocked_decode_account_id = mocker.Mock()
-    mocker.patch.object(
-        subtensor_module, "decode_account_id", new=mocked_decode_account_id
-    )
 
     # Call
     result = subtensor.get_owned_hotkeys(fake_coldkey)
@@ -3133,16 +3097,17 @@ def test_get_owned_hotkeys_happy_path(subtensor, mocker):
         params=[fake_coldkey],
         block_hash=None,
     )
-    assert result == [mocked_decode_account_id.return_value]
-    mocked_decode_account_id.assert_called_once_with(fake_hotkey)
+    assert result == fake_hotkeys.value
 
 
 def test_get_owned_hotkeys_return_empty(subtensor, mocker):
     """Tests that the output of get_owned_hotkeys is empty."""
     # Prep
     fake_coldkey = "fake_hotkey"
-    mocked_subtensor = mocker.Mock(return_value=[])
-    mocker.patch.object(subtensor.substrate, "query", new=mocked_subtensor)
+    mocked_return = mocker.MagicMock(spec=ScaleType, value=[])
+    mocked_subtensor = mocker.patch.object(
+        subtensor.substrate, "query", return_value=mocked_return
+    )
 
     # Call
     result = subtensor.get_owned_hotkeys(fake_coldkey)
@@ -3182,6 +3147,76 @@ def test_start_call(subtensor, mocker):
     assert result == mocked_extrinsic.return_value
 
 
+def test_add_stake_burn(subtensor, fake_wallet, mocker):
+    """Test add_stake_burn extrinsic calls properly."""
+    # Preps
+    netuid = 123
+    hotkey_ss58 = "hotkey"
+    amount = Balance.from_tao(1.0)
+    mocked_extrinsic = mocker.patch.object(subtensor_module, "add_stake_burn_extrinsic")
+
+    # Call
+    result = subtensor.add_stake_burn(
+        wallet=fake_wallet,
+        netuid=netuid,
+        hotkey_ss58=hotkey_ss58,
+        amount=amount,
+    )
+
+    # Asserts
+    mocked_extrinsic.assert_called_once_with(
+        subtensor=subtensor,
+        wallet=fake_wallet,
+        netuid=netuid,
+        hotkey_ss58=hotkey_ss58,
+        amount=amount,
+        limit_price=None,
+        mev_protection=DEFAULT_MEV_PROTECTION,
+        period=DEFAULT_PERIOD,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        wait_for_revealed_execution=True,
+    )
+    assert result == mocked_extrinsic.return_value
+
+
+def test_add_stake_burn_with_limit_price(subtensor, fake_wallet, mocker):
+    """Test add_stake_burn extrinsic passes limit price."""
+    # Preps
+    netuid = 123
+    hotkey_ss58 = "hotkey"
+    amount = Balance.from_tao(1.0)
+    limit_price = Balance.from_tao(2.0)
+    mocked_extrinsic = mocker.patch.object(subtensor_module, "add_stake_burn_extrinsic")
+
+    # Call
+    result = subtensor.add_stake_burn(
+        wallet=fake_wallet,
+        netuid=netuid,
+        hotkey_ss58=hotkey_ss58,
+        amount=amount,
+        limit_price=limit_price,
+    )
+
+    # Asserts
+    mocked_extrinsic.assert_called_once_with(
+        subtensor=subtensor,
+        wallet=fake_wallet,
+        netuid=netuid,
+        hotkey_ss58=hotkey_ss58,
+        amount=amount,
+        limit_price=limit_price,
+        mev_protection=DEFAULT_MEV_PROTECTION,
+        period=DEFAULT_PERIOD,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        wait_for_revealed_execution=True,
+    )
+    assert result == mocked_extrinsic.return_value
+
+
 def test_get_metagraph_info_all_fields(subtensor, mocker):
     """Test get_metagraph_info with all fields (default behavior)."""
     # Preps
@@ -3192,7 +3227,7 @@ def test_get_metagraph_info_all_fields(subtensor, mocker):
     mock_runtime_call = mocker.patch.object(
         subtensor.substrate,
         "runtime_call",
-        return_value=mocker.Mock(value=mock_value),
+        return_value=mock_value,
     )
     mock_chain_head = mocker.patch.object(
         subtensor.substrate,
@@ -3203,21 +3238,15 @@ def test_get_metagraph_info_all_fields(subtensor, mocker):
         subtensor_module.MetagraphInfo, "from_dict", return_value="parsed_metagraph"
     )
     mocked_runtime_metadata_v15 = {
-        "apis": [
-            {
-                "name": "SubnetInfoRuntimeApi",
-                "methods": [
-                    {"name": "get_selective_metagraph"},
-                    {"name": "get_metagraph"},
-                    {"name": "get_selective_mechagraph"},
-                ],
-            },
-        ]
+        "SubnetInfoRuntimeApi": {
+            "get_selective_metagraph": {"name": "get_selective_metagraph"},
+            "get_metagraph": {"name": "get_metagraph"},
+            "get_selective_mechagraph": {"name": "get_selective_mechagraph"},
+        },
     }
     mocked_runtime = mocker.Mock(spec=Runtime)
-    mocked_metadata = mocker.Mock()
-    mocked_metadata.value.return_value = mocked_runtime_metadata_v15
-    mocked_runtime.metadata_v15 = mocked_metadata
+    mocked_runtime.metadata_v15 = mocker.Mock()
+    mocked_runtime.runtime_api_map = mocked_runtime_metadata_v15
     mocker.patch.object(
         subtensor.substrate,
         "init_runtime",
@@ -3251,7 +3280,7 @@ def test_get_metagraph_info_specific_fields(subtensor, mocker):
     mock_runtime_call = mocker.patch.object(
         subtensor.substrate,
         "runtime_call",
-        return_value=mocker.Mock(value=mock_value),
+        return_value=mock_value,
     )
     mock_chain_head = mocker.patch.object(
         subtensor.substrate,
@@ -3259,21 +3288,15 @@ def test_get_metagraph_info_specific_fields(subtensor, mocker):
         return_value="0xfakechainhead",
     )
     mocked_runtime_metadata_v15 = {
-        "apis": [
-            {
-                "name": "SubnetInfoRuntimeApi",
-                "methods": [
-                    {"name": "get_selective_metagraph"},
-                    {"name": "get_metagraph"},
-                    {"name": "get_selective_mechagraph"},
-                ],
-            },
-        ]
+        "SubnetInfoRuntimeApi": {
+            "get_selective_metagraph": {"name": "get_selective_metagraph"},
+            "get_metagraph": {"name": "get_metagraph"},
+            "get_selective_mechagraph": {"name": "get_selective_mechagraph"},
+        },
     }
     mocked_runtime = mocker.Mock(spec=Runtime)
-    mocked_metadata = mocker.Mock()
-    mocked_metadata.value.return_value = mocked_runtime_metadata_v15
-    mocked_runtime.metadata_v15 = mocked_metadata
+    mocked_runtime.metadata_v15 = mocker.Mock()
+    mocked_runtime.runtime_api_map = mocked_runtime_metadata_v15
     mocker.patch.object(
         subtensor.substrate,
         "init_runtime",
@@ -3314,21 +3337,15 @@ def test_get_metagraph_info_subnet_not_exist(subtensor, mocker):
         return_value=None,
     )
     mocked_runtime_metadata_v15 = {
-        "apis": [
-            {
-                "name": "SubnetInfoRuntimeApi",
-                "methods": [
-                    {"name": "get_selective_metagraph"},
-                    {"name": "get_metagraph"},
-                    {"name": "get_selective_mechagraph"},
-                ],
-            },
-        ]
+        "SubnetInfoRuntimeApi": {
+            "get_selective_metagraph": {"name": "get_selective_metagraph"},
+            "get_metagraph": {"name": "get_metagraph"},
+            "get_selective_mechagraph": {"name": "get_selective_mechagraph"},
+        },
     }
     mocked_runtime = mocker.Mock(spec=Runtime)
-    mocked_metadata = mocker.Mock()
-    mocked_metadata.value.return_value = mocked_runtime_metadata_v15
-    mocked_runtime.metadata_v15 = mocked_metadata
+    mocked_runtime.metadata_v15 = mocker.Mock()
+    mocked_runtime.runtime_api_map = mocked_runtime_metadata_v15
     mocker.patch.object(
         subtensor.substrate,
         "init_runtime",
@@ -3372,25 +3389,19 @@ def test_get_metagraph_info_older_runtime_version(
         "runtime_call",
     )
     mocked_runtime_metadata_v15 = {
-        "apis": [
-            {
-                "name": "SubnetInfoRuntimeApi",
-                "methods": [
-                    {"name": "get_selective_metagraph"},
-                    {"name": "get_metagraph"},
-                ],
-            },
-        ]
+        "SubnetInfoRuntimeApi": {
+            "get_selective_metagraph": {"name": "get_selective_metagraph"},
+            "get_metagraph": {"name": "get_metagraph"},
+        },
     }
     if block == 6_800_000:
         # only the newer block should have 'mechagraph' runtime
-        mocked_runtime_metadata_v15["apis"][0]["methods"].append(
-            {"name": "get_selective_mechagraph"}
-        )
+        mocked_runtime_metadata_v15["SubnetInfoRuntimeApi"][
+            "get_selective_mechagraph"
+        ] = {"name": "get_selective_mechagraph"}
     mocked_runtime = mocker.Mock(spec=Runtime)
-    mocked_metadata = mocker.Mock()
-    mocked_metadata.value.return_value = mocked_runtime_metadata_v15
-    mocked_runtime.metadata_v15 = mocked_metadata
+    mocked_runtime.metadata_v15 = mocker.Mock()
+    mocked_runtime.runtime_api_map = mocked_runtime_metadata_v15
     mocker.patch.object(
         subtensor.substrate,
         "init_runtime",
@@ -3429,12 +3440,12 @@ def test_blocks_since_last_step_with_value(subtensor, mocker):
     assert result == mocked_query_subtensor.return_value.value
 
 
-def test_blocks_since_last_step_is_none(subtensor, mocker):
+def test_blocks_since_last_step_is_none(subtensor, mocker, scale_type_none):
     """Test blocks_since_last_step returns None correctly."""
     # preps
     netuid = 1
     block = 123
-    mocked_query_subtensor = mocker.MagicMock(return_value=None)
+    mocked_query_subtensor = mocker.MagicMock(return_value=scale_type_none)
     subtensor.query_subtensor = mocked_query_subtensor
 
     # call
@@ -3618,26 +3629,29 @@ def test_get_subnet_info_no_data(mocker, subtensor):
 
 
 def test_get_next_epoch_start_block(mocker, subtensor):
-    """Check that get_next_epoch_start_block returns the correct value."""
-    # Prep
+    """Check that get_next_epoch_start_block delegates to runtime API."""
     netuid = 14
     block = 20
 
-    mocked_tempo = mocker.patch.object(subtensor, "tempo", return_value=100)
-    mocked_blocks_until_next_epoch = mocker.patch.object(
-        subtensor,
-        "blocks_until_next_epoch",
-    )
+    mocker.patch.object(subtensor, "query_runtime_api", return_value=150)
 
-    # Call
     result = subtensor.get_next_epoch_start_block(netuid=netuid, block=block)
 
-    # Asserts
-    mocked_tempo.assert_called_once_with(
-        netuid=netuid,
+    subtensor.query_runtime_api.assert_called_once_with(
+        runtime_api="SubnetInfoRuntimeApi",
+        method="get_next_epoch_start_block",
+        params=[netuid],
         block=block,
     )
-    assert result == mocked_blocks_until_next_epoch.return_value.__radd__().__add__()
+    assert result == 150
+
+
+def test_get_next_epoch_start_block_none(mocker, subtensor):
+    """Check that get_next_epoch_start_block returns None when API returns None."""
+    mocker.patch.object(subtensor, "query_runtime_api", return_value=None)
+
+    result = subtensor.get_next_epoch_start_block(netuid=1, block=20)
+    assert result is None
 
 
 def test_get_parents_success(subtensor, mocker):
@@ -3647,18 +3661,13 @@ def test_get_parents_success(subtensor, mocker):
     fake_netuid = 1
     fake_parents = mocker.Mock(
         value=[
-            (1000, ["parent_key_1"]),
-            (2000, ["parent_key_2"]),
+            (1000, "decoded_parent_key_1"),
+            (2000, "decoded_parent_key_2"),
         ]
     )
 
     mocked_query = mocker.MagicMock(return_value=fake_parents)
     subtensor.substrate.query = mocked_query
-
-    mocked_decode_account_id = mocker.Mock(
-        side_effect=["decoded_parent_key_1", "decoded_parent_key_2"]
-    )
-    mocker.patch.object(subtensor_module, "decode_account_id", mocked_decode_account_id)
 
     expected_formatted_parents = [
         (u64_normalized_float(1000), "decoded_parent_key_1"),
@@ -3675,20 +3684,18 @@ def test_get_parents_success(subtensor, mocker):
         storage_function="ParentKeys",
         params=[fake_hotkey, fake_netuid],
     )
-    mocked_decode_account_id.assert_has_calls(
-        [mocker.call("parent_key_1"), mocker.call("parent_key_2")]
-    )
     assert result == expected_formatted_parents
 
 
-def test_get_parents_no_parents(subtensor, mocker):
+def test_get_parents_no_parents(subtensor, mocker, scale_type):
     """Tests get_parents when there are no parents to retrieve."""
     # Preps
     fake_hotkey = "valid_hotkey"
     fake_netuid = 1
     fake_parents = []
+    scale_type.value = fake_parents
 
-    mocked_query = mocker.MagicMock(return_value=fake_parents)
+    mocked_query = mocker.MagicMock(return_value=scale_type)
     subtensor.substrate.query = mocked_query
 
     # Call
@@ -3772,124 +3779,6 @@ def test_unstake_all(subtensor, fake_wallet, mocker):
         wait_for_revealed_execution=True,
     )
     assert result == fake_unstake_all_extrinsic.return_value
-
-
-def test_get_liquidity_list_subnet_does_not_exits(subtensor, mocker):
-    """Test get_liquidity_list returns None when subnet doesn't exist."""
-    # Preps
-    mocker.patch.object(subtensor, "subnet_exists", return_value=False)
-
-    # Call
-    result = subtensor.get_liquidity_list(wallet=mocker.Mock(), netuid=1)
-
-    # Asserts
-    subtensor.subnet_exists.assert_called_once_with(netuid=1)
-    assert result is None
-
-
-def test_get_liquidity_list_subnet_is_not_active(subtensor, mocker):
-    """Test get_liquidity_list returns None when subnet is not active."""
-    # Preps
-    mocker.patch.object(subtensor, "subnet_exists", return_value=True)
-    mocker.patch.object(subtensor, "is_subnet_active", return_value=False)
-
-    # Call
-    result = subtensor.get_liquidity_list(wallet=mocker.Mock(), netuid=1)
-
-    # Asserts
-    subtensor.subnet_exists.assert_called_once_with(netuid=1)
-    subtensor.is_subnet_active.assert_called_once_with(netuid=1)
-    assert result is None
-
-
-def test_get_liquidity_list_happy_path(subtensor, fake_wallet, mocker):
-    """Tests `get_liquidity_list` returns the correct value."""
-    netuid = 2
-
-    # Mock network state
-    mocker.patch.object(subtensor, "subnet_exists", return_value=True)
-    mocker.patch.object(subtensor, "is_subnet_active", return_value=True)
-    mocker.patch.object(subtensor, "determine_block_hash", return_value="0x1234")
-
-    # Mock price and fee calculation
-    mocker.patch.object(subtensor_module, "price_to_tick", return_value=100)
-    mocker.patch.object(
-        subtensor_module,
-        "calculate_fees",
-        return_value=(Balance.from_tao(0.0), Balance.from_tao(0.0, netuid)),
-    )
-
-    # Fake positions to return from query_map
-    fake_positions = [
-        [
-            (2,),
-            mocker.Mock(
-                value={
-                    "id": (2,),
-                    "netuid": 2,
-                    "tick_low": (206189,),
-                    "tick_high": (208196,),
-                    "liquidity": 1000000000000,
-                    "fees_tao": {"bits": 0},
-                    "fees_alpha": {"bits": 0},
-                }
-            ),
-        ],
-    ]
-    fake_result = mocker.MagicMock(records=fake_positions, autospec=list)
-    fake_result.__iter__.return_value = iter(fake_positions)
-
-    mocked_query_map = mocker.Mock(return_value=fake_result)
-    mocker.patch.object(subtensor, "query_map", new=mocked_query_map)
-
-    # Mock storage key creation
-    mocker.patch.object(
-        subtensor.substrate,
-        "create_storage_key",
-        side_effect=lambda pallet,
-        storage_function,
-        params,
-        block_hash=None: f"{pallet}:{storage_function}:{params}",
-    )
-
-    # Mock query_multi for fee + sqrt_price + tick data
-    mock_query_multi = mocker.MagicMock(
-        side_effect=[
-            [
-                ("key1", {"bits": 0}),  # fee_global_tao
-                ("key2", {"bits": 0}),  # fee_global_alpha
-                ("key3", {"bits": 1072693248}),
-            ],
-            [
-                (
-                    "tick_low",
-                    {"fees_out_tao": {"bits": 0}, "fees_out_alpha": {"bits": 0}},
-                ),
-                (
-                    "tick_high",
-                    {"fees_out_tao": {"bits": 0}, "fees_out_alpha": {"bits": 0}},
-                ),
-            ],
-        ]
-    )
-    mocker.patch.object(subtensor.substrate, "query_multi", new=mock_query_multi)
-
-    # Call
-    result = subtensor.get_liquidity_list(wallet=fake_wallet, netuid=netuid)
-
-    # Asserts
-    assert subtensor.determine_block_hash.call_count == 1
-    assert subtensor_module.price_to_tick.call_count == 1
-    assert subtensor_module.calculate_fees.call_count == len(fake_positions)
-    mocked_query_map.assert_called_once_with(
-        module="Swap",
-        name="Positions",
-        params=[netuid, fake_wallet.coldkeypub.ss58_address],
-        block=None,
-    )
-    assert mock_query_multi.call_count == 2  # one for fees, one for ticks
-    assert len(result) == len(fake_positions)
-    assert all(isinstance(p, subtensor_module.LiquidityPosition) for p in result)
 
 
 def test_add_liquidity(subtensor, fake_wallet, mocker):
@@ -4034,7 +3923,7 @@ def test_get_subnet_price(subtensor, mocker):
     fake_price = 29258617
     expected_price = Balance.from_tao(0.029258617)
     mocked_query = mocker.patch.object(
-        subtensor.substrate, "runtime_call", return_value=mocker.Mock(value=fake_price)
+        subtensor.substrate, "runtime_call", return_value=fake_price
     )
 
     # Call
@@ -4055,30 +3944,67 @@ def test_get_subnet_price(subtensor, mocker):
 
 
 def test_get_subnet_prices(subtensor, mocker):
-    """Test get_subnet_prices returns the correct value."""
-    # preps
-    mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
-    fake_prices = [
-        [0, {"bits": 0}],
-        [1, {"bits": 3155343338053956962}],
+    """Test get_subnet_prices returns the correct value via runtime API."""
+    # Preps
+    fake_block_hash = "0xabc"
+    mocker.patch.object(subtensor, "determine_block_hash", return_value=fake_block_hash)
+    mocker.patch.object(subtensor, "_runtime_method_exists", return_value=True)
+    fake_prices_rao = [
+        {"netuid": 0, "price": 1_000_000_000},
+        {"netuid": 1, "price": 29_258_617},
     ]
-    expected_prices = {0: Balance.from_tao(1), 1: Balance.from_tao(0.029258617)}
-    mocked_query_map = mocker.patch.object(
-        subtensor.substrate, "query_map", return_value=fake_prices
+    expected_prices = {
+        0: Balance.from_rao(1_000_000_000),
+        1: Balance.from_rao(29_258_617),
+    }
+    mocked_runtime_call = mocker.patch.object(
+        subtensor.substrate, "runtime_call", return_value=fake_prices_rao
     )
 
     # Call
     result = subtensor.get_subnet_prices()
 
     # Asserts
-    mocked_determine_block_hash.assert_called_once_with(block=None)
-    mocked_query_map.assert_called_once_with(
-        module="Swap",
-        storage_function="AlphaSqrtPrice",
-        block_hash=mocked_determine_block_hash.return_value,
-        page_size=129,  # total number of subnets
+    subtensor._runtime_method_exists.assert_called_once_with(
+        api="SwapRuntimeApi",
+        method="current_alpha_price_all",
+        block_hash=fake_block_hash,
+    )
+    mocked_runtime_call.assert_called_once_with(
+        api="SwapRuntimeApi",
+        method="current_alpha_price_all",
+        block_hash=fake_block_hash,
     )
     assert result == expected_prices
+
+
+def test_get_subnet_prices_fallback(subtensor, mocker):
+    """Test get_subnet_prices falls back to per-subnet calls when runtime API is missing."""
+    # Preps
+    fake_block_hash = "0xabc"
+    mocker.patch.object(subtensor, "determine_block_hash", return_value=fake_block_hash)
+    mocker.patch.object(subtensor, "_runtime_method_exists", return_value=False)
+    mocker.patch.object(subtensor, "get_all_subnets_netuid", return_value=[0, 1, 2])
+    mocker.patch.object(
+        subtensor,
+        "get_subnet_price",
+        side_effect=[
+            Balance.from_tao(1),
+            Balance.from_rao(29_258_617),
+            Balance.from_rao(50_000_000),
+        ],
+    )
+
+    # Call
+    result = subtensor.get_subnet_prices()
+
+    # Asserts
+    assert result == {
+        0: Balance.from_tao(1),
+        1: Balance.from_rao(29_258_617),
+        2: Balance.from_rao(50_000_000),
+    }
+    assert subtensor.get_subnet_price.call_count == 3
 
 
 def test_all_subnets(subtensor, mocker):
@@ -4093,10 +4019,8 @@ def test_all_subnets(subtensor, mocker):
         "get_subnet_prices",
         return_value={0: Balance.from_tao(1), 1: Balance.from_tao(0.029258617)},
     )
-    mocked_decode = mocker.Mock(return_value=[{"netuid": 0}, {"netuid": 1}])
-    mocked_runtime_call = mocker.Mock(decode=mocked_decode)
     mocker.patch.object(
-        subtensor.substrate, "runtime_call", return_value=mocked_runtime_call
+        subtensor.substrate, "runtime_call", return_value=[{"netuid": 0}, {"netuid": 1}]
     )
 
     # Call
@@ -4128,8 +4052,7 @@ def test_subnet(subtensor, mocker):
     mocked_get_subnet_price = mocker.patch.object(
         subtensor, "get_subnet_price", return_value=Balance.from_tao(100.0)
     )
-    mocked_decode = mocker.Mock(return_value={"netuid": netuid})
-    mocked_runtime_call = mocker.Mock(decode=mocked_decode)
+    mocked_runtime_call = {"netuid": netuid}
     mocker.patch.object(
         subtensor.substrate, "runtime_call", return_value=mocked_runtime_call
     )
@@ -4173,6 +4096,53 @@ def test_get_stake_add_fee(subtensor, mocker):
         block=None,
     )
     assert result == mocked_sim_swap.return_value.tao_fee
+
+
+def test_get_stake_availability_for_coldkeys(subtensor, mocker):
+    """Tests get_stake_availability_for_coldkeys returns raw dict from runtime API."""
+    # Preps
+    fake_coldkeys = ["ck1", "ck2"]
+    fake_result = {
+        "ck1": {
+            2: {"total": 1_500_000_000, "locked": 0, "available": 1_500_000_000},
+            3: {"total": 800_000_000, "locked": 200_000_000, "available": 600_000_000},
+        },
+        "ck2": {},
+    }
+    mocker.patch.object(subtensor, "query_runtime_api", return_value=fake_result)
+
+    # Call
+    result = subtensor.get_stake_availability_for_coldkeys(
+        coldkey_ss58s=fake_coldkeys, netuids=[2, 3], block=100
+    )
+
+    # Asserts
+    subtensor.query_runtime_api.assert_called_once_with(
+        runtime_api="StakeInfoRuntimeApi",
+        method="get_stake_availability_for_coldkeys",
+        params=[fake_coldkeys, [2, 3]],
+        block=100,
+    )
+    assert result == fake_result
+
+
+def test_get_stake_availability_for_coldkeys_netuids_none(subtensor, mocker):
+    """Tests get_stake_availability_for_coldkeys passes None netuids correctly."""
+    # Preps
+    fake_result = {"ck1": {1: {"total": 100, "locked": 0, "available": 100}}}
+    mocker.patch.object(subtensor, "query_runtime_api", return_value=fake_result)
+
+    # Call
+    result = subtensor.get_stake_availability_for_coldkeys(coldkey_ss58s=["ck1"])
+
+    # Asserts
+    subtensor.query_runtime_api.assert_called_once_with(
+        runtime_api="StakeInfoRuntimeApi",
+        method="get_stake_availability_for_coldkeys",
+        params=[["ck1"], None],
+        block=None,
+    )
+    assert result == fake_result
 
 
 def test_get_unstake_fee(subtensor, mocker):
@@ -4265,6 +4235,201 @@ def test_get_stake_weight(subtensor, mocker):
     assert result == expected_result
 
 
+# Lock / Conviction tests =====================================================================
+
+
+def test_get_stake_lock_success(subtensor, mocker):
+    """Tests get_stake_lock returns LockState when lock exists."""
+    # Preps
+    coldkey = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty"
+    hotkey = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+    netuid = 1
+    raw_value = {"locked_mass": 1_000_000_000, "conviction": 1 << 64, "last_update": 50}
+    mock_query = mocker.MagicMock(value=raw_value)
+    mocker.patch.object(subtensor, "query_subtensor", return_value=mock_query)
+
+    # Call
+    result = subtensor.get_stake_lock(coldkey, netuid, hotkey)
+
+    # Asserts
+    subtensor.query_subtensor.assert_called_once_with(
+        "Lock", params=[coldkey, netuid, hotkey], block=None
+    )
+    assert result is not None
+    assert result["locked_mass"].rao == 1_000_000_000
+    assert isinstance(result["conviction"], float)
+    assert result["last_update"] == 50
+
+
+def test_get_stake_lock_none(subtensor, mocker):
+    """Tests get_stake_lock returns None when no lock exists."""
+    # Preps
+    mock_query = mocker.MagicMock(value=None)
+    mocker.patch.object(subtensor, "query_subtensor", return_value=mock_query)
+
+    # Call
+    result = subtensor.get_stake_lock("coldkey", 1, "hotkey")
+
+    # Asserts
+    assert result is None
+
+
+def test_get_stake_locks_success(subtensor, mocker):
+    """Tests get_stake_locks returns list of (hotkey, LockState) tuples."""
+    # Preps
+    coldkey = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty"
+    netuid = 1
+    hotkey1 = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+    hotkey2 = "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y"
+    raw_locks = [
+        (hotkey1, {"locked_mass": 500, "conviction": 0, "last_update": 10}),
+        (hotkey2, {"locked_mass": 1000, "conviction": 1 << 63, "last_update": 20}),
+    ]
+    mocker.patch.object(subtensor, "query_map_subtensor", return_value=iter(raw_locks))
+
+    # Call
+    result = subtensor.get_stake_locks(coldkey, netuid)
+
+    # Asserts
+    subtensor.query_map_subtensor.assert_called_once_with(
+        "Lock", params=[coldkey, netuid], block=None
+    )
+    assert len(result) == 2
+    assert result[0][0] == hotkey1
+    assert result[0][1]["locked_mass"].rao == 500
+    assert result[1][0] == hotkey2
+    assert result[1][1]["locked_mass"].rao == 1000
+
+
+def test_get_stake_locks_empty(subtensor, mocker):
+    """Tests get_stake_locks returns empty list when no locks exist."""
+    # Preps
+    mocker.patch.object(subtensor, "query_map_subtensor", return_value=iter([]))
+
+    # Call
+    result = subtensor.get_stake_locks("coldkey", 1)
+
+    # Asserts
+    assert result == []
+
+
+@pytest.mark.parametrize(
+    "query_value, expected",
+    [(False, True), (None, False)],
+    ids=["perpetual-entry-exists", "decaying-no-entry"],
+)
+def test_is_perpetual_lock(subtensor, mocker, query_value, expected):
+    """Tests is_perpetual_lock correctly distinguishes perpetual from decaying."""
+    # Preps
+    mock_query = mocker.MagicMock(value=query_value)
+    mocker.patch.object(subtensor, "query_subtensor", return_value=mock_query)
+
+    # Call
+    result = subtensor.is_perpetual_lock("coldkey", 1)
+
+    # Asserts
+    subtensor.query_subtensor.assert_called_once_with(
+        name="DecayingLock", params=["coldkey", 1], block=None
+    )
+    assert result is expected
+
+
+def test_get_coldkey_lock_success(subtensor, mocker):
+    """Tests get_coldkey_lock returns LockState when lock exists."""
+    # Preps
+    raw_result = {"locked_mass": 2000, "conviction": 1 << 64, "last_update": 100}
+    mocker.patch.object(subtensor, "query_runtime_api", return_value=raw_result)
+
+    # Call
+    result = subtensor.get_coldkey_lock("coldkey", 1)
+
+    # Asserts
+    subtensor.query_runtime_api.assert_called_once_with(
+        runtime_api="StakeInfoRuntimeApi",
+        method="get_coldkey_lock",
+        params=["coldkey", 1],
+        block=None,
+    )
+    assert result is not None
+    assert result["locked_mass"].rao == 2000
+    assert isinstance(result["conviction"], float)
+    assert result["last_update"] == 100
+
+
+def test_get_coldkey_lock_none(subtensor, mocker):
+    """Tests get_coldkey_lock returns None when no lock exists."""
+    # Preps
+    mocker.patch.object(subtensor, "query_runtime_api", return_value=None)
+
+    # Call
+    result = subtensor.get_coldkey_lock("coldkey", 1)
+
+    # Asserts
+    assert result is None
+
+
+def test_get_hotkey_conviction_success(subtensor, mocker):
+    """Tests get_hotkey_conviction returns float conviction score."""
+    # Preps
+    mocker.patch.object(subtensor, "query_runtime_api", return_value=(1 << 64))
+
+    # Call
+    result = subtensor.get_hotkey_conviction("hotkey", 1)
+
+    # Asserts
+    subtensor.query_runtime_api.assert_called_once_with(
+        runtime_api="StakeInfoRuntimeApi",
+        method="get_hotkey_conviction",
+        params=["hotkey", 1],
+        block=None,
+    )
+    assert isinstance(result, float)
+    assert result > 0.0
+
+
+def test_get_hotkey_conviction_none(subtensor, mocker):
+    """Tests get_hotkey_conviction returns 0.0 when no data."""
+    # Preps
+    mocker.patch.object(subtensor, "query_runtime_api", return_value=None)
+
+    # Call
+    result = subtensor.get_hotkey_conviction("hotkey", 1)
+
+    # Asserts
+    assert result == 0.0
+
+
+def test_get_most_convicted_hotkey_on_subnet_success(subtensor, mocker):
+    """Tests get_most_convicted_hotkey_on_subnet returns hotkey SS58."""
+    # Preps
+    expected_hotkey = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+    mocker.patch.object(subtensor, "query_runtime_api", return_value=expected_hotkey)
+
+    # Call
+    result = subtensor.get_most_convicted_hotkey_on_subnet(1)
+
+    # Asserts
+    subtensor.query_runtime_api.assert_called_once_with(
+        runtime_api="StakeInfoRuntimeApi",
+        method="get_most_convicted_hotkey_on_subnet",
+        params=[1],
+        block=None,
+    )
+    assert result == expected_hotkey
+
+
+def test_get_most_convicted_hotkey_on_subnet_none(subtensor, mocker):
+    """Tests get_most_convicted_hotkey_on_subnet returns None when no locks."""
+    # Preps
+    mocker.patch.object(subtensor, "query_runtime_api", return_value=None)
+
+    # Call
+    result = subtensor.get_most_convicted_hotkey_on_subnet(1)
+
+    # Asserts
+    assert result is None
+
+
 def test_get_timelocked_weight_commits(subtensor, mocker):
     """Verify that `get_timelocked_weight_commits` method calls proper methods and returns the correct value."""
     # Preps
@@ -4289,6 +4454,7 @@ def test_get_timelocked_weight_commits(subtensor, mocker):
         storage_function="TimelockedWeightCommits",
         params=[netuid],
         block_hash=mock_determine_block_hash.return_value,
+        page_size=1,
     )
     assert result == []
 
@@ -4296,7 +4462,7 @@ def test_get_timelocked_weight_commits(subtensor, mocker):
 @pytest.mark.parametrize(
     "query_return, expected_result",
     (
-        ["value", [10, 90]],
+        [[6553, 58982], [10, 90]],
         [None, None],
     ),
 )
@@ -4304,9 +4470,7 @@ def test_get_mechanism_emission_split(subtensor, mocker, query_return, expected_
     """Verify that get_mechanism_emission_split calls the correct methods."""
     # Preps
     netuid = mocker.Mock()
-    query_return = (
-        mocker.Mock(value=[6553, 58982]) if query_return == "value" else query_return
-    )
+    query_return = mocker.Mock(value=query_return)
     mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
     mocked_query = mocker.patch.object(
         subtensor.substrate, "query", return_value=query_return
@@ -4353,42 +4517,37 @@ def test_get_mechanism_count(subtensor, mocker):
 
 def test_is_in_admin_freeze_window_root_net(subtensor, mocker):
     """Verify that root net has no admin freeze window."""
-    # Preps
     netuid = 0
-    mocked_get_next_epoch_start_block = mocker.patch.object(
-        subtensor, "get_next_epoch_start_block"
-    )
+    mocked_tempo = mocker.patch.object(subtensor, "tempo")
 
-    # Call
     result = subtensor.is_in_admin_freeze_window(netuid=netuid)
 
-    # Asserts
-    mocked_get_next_epoch_start_block.assert_not_called()
+    mocked_tempo.assert_not_called()
     assert result is False
 
 
 @pytest.mark.parametrize(
-    "block, next_esb, expected_result",
-    (
-        [89, 100, False],
-        [90, 100, False],
-        [91, 100, True],
-    ),
+    "block_number, pending, last, tempo, window, expected",
+    [
+        (91, 200, 80, 20, 10, True),
+        (91, 0, 80, 20, 10, True),
+        (90, 0, 80, 20, 10, False),
+        (89, 0, 80, 20, 10, False),
+    ],
 )
-def test_is_in_admin_freeze_window(subtensor, mocker, block, next_esb, expected_result):
-    """Verify that `is_in_admin_freeze_window` method processed the data correctly."""
-    # Preps
+def test_is_in_admin_freeze_window(
+    subtensor, mocker, block_number, pending, last, tempo, window, expected
+):
+    """Verify is_in_admin_freeze_window matches chain logic with storage getters."""
     netuid = 14
-    mocker.patch.object(subtensor, "get_current_block", return_value=block)
-    mocker.patch.object(subtensor, "get_next_epoch_start_block", return_value=next_esb)
-    mocker.patch.object(subtensor, "get_admin_freeze_window", return_value=10)
+    mocker.patch.object(subtensor, "tempo", return_value=tempo)
+    mocker.patch.object(subtensor, "get_pending_epoch_at", return_value=pending)
+    mocker.patch.object(subtensor, "get_last_epoch_block", return_value=last)
+    mocker.patch.object(subtensor, "get_admin_freeze_window", return_value=window)
 
-    # Call
+    result = subtensor.is_in_admin_freeze_window(netuid=netuid, block=block_number)
 
-    result = subtensor.is_in_admin_freeze_window(netuid=netuid)
-
-    # Asserts
-    assert result is expected_result
+    assert result is expected
 
 
 def test_get_admin_freeze_window(subtensor, mocker):
@@ -4420,19 +4579,10 @@ def test_get_auto_stakes(subtensor, mocker):
     fake_hk_1 = mocker.Mock()
     fake_hk_2 = mocker.Mock()
 
-    dest_value_1 = mocker.Mock(value=[fake_hk_1])
-    dest_value_2 = mocker.Mock(value=[fake_hk_2])
-
     mock_result = mocker.MagicMock()
-    mock_result.__iter__.return_value = iter([(0, dest_value_1), (1, dest_value_2)])
+    mock_result.__iter__.return_value = iter([(0, fake_hk_1), (1, fake_hk_2)])
     mocked_query_map = mocker.patch.object(
         subtensor.substrate, "query_map", return_value=mock_result
-    )
-
-    mocked_decode_account_id = mocker.patch.object(
-        subtensor_module,
-        "decode_account_id",
-        side_effect=[fake_hk_1, fake_hk_2],
     )
 
     # Call
@@ -4445,9 +4595,6 @@ def test_get_auto_stakes(subtensor, mocker):
         storage_function="AutoStakeDestination",
         params=[fake_coldkey],
         block_hash=mock_determine_block_hash.return_value,
-    )
-    mocked_decode_account_id.assert_has_calls(
-        [mocker.call(dest_value_1.value[0]), mocker.call(dest_value_2.value[0])]
     )
     assert result == {0: fake_hk_1, 1: fake_hk_2}
 
@@ -4787,15 +4934,17 @@ def test_get_crowdloan_constants(mocker, subtensor):
 def test_get_crowdloan_contributions(mocker, subtensor):
     """Tests subtensor `get_crowdloan_contributions` method."""
     # Preps
-    fake_hk_array = mocker.Mock(spec=list)
-    fake_contribution = mocker.Mock(value=mocker.Mock(spec=Balance))
+    fake_hk = mocker.Mock(spec=str)
+    fake_contribution = mocker.Mock(spec=int)
 
     fake_crowdloan_id = mocker.Mock(spec=int)
+    records = [(fake_hk, fake_contribution)]
+    fake_result = mocker.MagicMock(autospec=list)
+    fake_result.records = records
+    fake_result.__iter__.return_value = iter(records)
     mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
-    mocked_query_map = mocker.patch.object(subtensor.substrate, "query_map")
-    mocked_query_map.return_value.records = [(fake_hk_array, fake_contribution)]
-    mocked_decode_account_id = mocker.patch.object(
-        subtensor_module, "decode_account_id"
+    mocked_query_map = mocker.patch.object(
+        subtensor.substrate, "query_map", return_value=fake_result
     )
     mocked_from_rao = mocker.patch.object(subtensor_module.Balance, "from_rao")
 
@@ -4804,9 +4953,7 @@ def test_get_crowdloan_contributions(mocker, subtensor):
 
     # Asserts
     mocked_determine_block_hash.assert_called_once()
-    assert result == {
-        mocked_decode_account_id.return_value: mocked_from_rao.return_value
-    }
+    assert result == {fake_hk: mocked_from_rao.return_value}
 
 
 @pytest.mark.parametrize(
@@ -4818,9 +4965,7 @@ def test_get_crowdloan_by_id(mocker, subtensor, query_return, expected_result):
     fake_crowdloan_id = mocker.Mock(spec=int)
     mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
 
-    mocked_query_return = (
-        None if query_return is None else mocker.Mock(value=query_return)
-    )
+    mocked_query_return = mocker.Mock(value=query_return)
     mocked_query = mocker.patch.object(
         subtensor.substrate, "query", return_value=mocked_query_return
     )
@@ -4872,13 +5017,17 @@ def test_get_crowdloans(mocker, subtensor):
     """Tests subtensor `get_crowdloans` method."""
     # Preps
     fake_id = mocker.Mock(spec=int)
-    fake_crowdloan = mocker.Mock(value=mocker.Mock(spec=dict))
+    fake_crowdloan = mocker.Mock(spec=dict)
 
     mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    records = [(fake_id, fake_crowdloan)]
+    fake_result = mocker.MagicMock(autospec=list)
+    fake_result.records = records
+    fake_result.__iter__.return_value = iter(records)
     mocked_query_map = mocker.patch.object(
         subtensor.substrate,
         "query_map",
-        return_value=mocker.Mock(records=[(fake_id, fake_crowdloan)]),
+        return_value=fake_result,
     )
     mocked_decode_crowdloan_entry = mocker.patch.object(
         subtensor, "_decode_crowdloan_entry"
@@ -4896,7 +5045,7 @@ def test_get_crowdloans(mocker, subtensor):
     )
     mocked_decode_crowdloan_entry.assert_called_once_with(
         crowdloan_id=fake_id,
-        data=fake_crowdloan.value,
+        data=fake_crowdloan,
         block_hash=mocked_determine_block_hash.return_value,
     )
     assert result == [mocked_decode_crowdloan_entry.return_value]
@@ -4951,23 +5100,14 @@ def test_commit_weights_with_zero_max_attempts(
 @pytest.mark.parametrize(
     "fake_result, expected_result",
     [
-        ({"Swap": ()}, "Swap"),
-        ({"Keep": ()}, "Keep"),
+        ("Swap", "Swap"),
+        ("Keep", "Keep"),
         (
-            {
-                "KeepSubnets": {
-                    "subnets": (
-                        (
-                            2,
-                            3,
-                        ),
-                    )
-                }
-            },
+            {"KeepSubnets": {"subnets": [2, 3]}},
             {"KeepSubnets": {"subnets": [2, 3]}},
         ),
         (
-            {"KeepSubnets": {"subnets": ((2,),)}},
+            {"KeepSubnets": {"subnets": [2]}},
             {
                 "KeepSubnets": {
                     "subnets": [
@@ -4978,13 +5118,16 @@ def test_commit_weights_with_zero_max_attempts(
         ),
     ],
 )
-def test_get_root_claim_type(mocker, subtensor, fake_result, expected_result):
+def test_get_root_claim_type(
+    mocker, subtensor, scale_type, fake_result, expected_result
+):
     """Tests that `get_root_claim_type` calls proper methods and returns the correct value."""
     # Preps
     fake_coldkey_ss58 = mocker.Mock(spec=str)
     mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    scale_type.value = fake_result
     mocked_map = mocker.patch.object(
-        subtensor.substrate, "query", return_value=fake_result
+        subtensor.substrate, "query", return_value=scale_type
     )
 
     # call
@@ -5033,7 +5176,7 @@ def test_get_root_claimable_all_rates(mocker, subtensor):
     # Preps
     hotkey_ss58 = mocker.Mock(spec=str)
     mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
-    fake_value = [((14, {"bits": 6520190}),)]
+    fake_value = {14: {"bits": 6520190}}
     fake_result = mocker.MagicMock(value=fake_value)
     fake_result.__iter__ = fake_value
     mocked_query = mocker.patch.object(
@@ -5373,7 +5516,7 @@ def test_get_proxy_announcement(subtensor, mocker):
         params=[fake_delegate_account_ss58],
         block_hash=mocked_determine_block_hash.return_value,
     )
-    mocked_from_dict.assert_called_once_with(mocked_query.return_value.value[0])
+    mocked_from_dict.assert_called_once_with(mocked_query.return_value.value)
     assert result == mocked_from_dict.return_value
 
 
@@ -5479,6 +5622,51 @@ def test_get_proxy_constants_as_dict(subtensor, mocker):
     mocked_from_dict.assert_called_once_with(fake_constants)
     mocked_to_dict.assert_called_once()
     assert result == fake_constants
+
+
+def test_get_proxy_filter(subtensor, mocker):
+    """Test get_proxy_filter calls runtime API correctly."""
+    # Prep
+    mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    mocked_runtime_call = mocker.patch.object(subtensor.substrate, "runtime_call")
+    mocked_from_list = mocker.patch.object(
+        subtensor_module.ProxyFilterInfo, "from_list"
+    )
+
+    # Call
+    result = subtensor.get_proxy_filter()
+
+    # Asserts
+    mocked_determine_block_hash.assert_called_once_with(None)
+    mocked_runtime_call.assert_called_once_with(
+        api="ProxyFilterRuntimeApi",
+        method="get_proxy_filter",
+        params=[None],
+        block_hash=mocked_determine_block_hash.return_value,
+    )
+    mocked_from_list.assert_called_once_with(mocked_runtime_call.return_value)
+    assert result == mocked_from_list.return_value
+
+
+def test_get_proxy_types(subtensor, mocker):
+    """Test get_proxy_types calls runtime API correctly."""
+    # Prep
+    mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    mocked_runtime_call = mocker.patch.object(subtensor.substrate, "runtime_call")
+    mocked_from_list = mocker.patch.object(subtensor_module.ProxyTypeInfo, "from_list")
+
+    # Call
+    result = subtensor.get_proxy_types()
+
+    # Asserts
+    mocked_determine_block_hash.assert_called_once_with(None)
+    mocked_runtime_call.assert_called_once_with(
+        api="ProxyFilterRuntimeApi",
+        method="get_proxy_types",
+        block_hash=mocked_determine_block_hash.return_value,
+    )
+    mocked_from_list.assert_called_once_with(mocked_runtime_call.return_value)
+    assert result == mocked_from_list.return_value
 
 
 def test_add_proxy(mocker, subtensor):
@@ -5857,24 +6045,25 @@ def test_remove_proxy(mocker, subtensor):
     assert response == mocked_remove_proxy_extrinsic.return_value
 
 
-def test_blocks_until_next_epoch_uses_default_tempo(subtensor, mocker):
-    """Test blocks_until_next_epoch uses self.tempo when tempo is None."""
-    # Prep
-    netuid = 0
+def test_blocks_until_next_epoch_runtime_api(subtensor, mocker):
+    """Test blocks_until_next_epoch derives from get_next_epoch_start_block runtime API."""
+    netuid = 1
     block = 20
-    tempo = 100
 
-    spy_get_current_block = mocker.spy(subtensor, "get_current_block")
-    spy_tempo = mocker.spy(subtensor, "tempo")
+    mocker.patch.object(subtensor, "get_next_epoch_start_block", return_value=150)
 
-    # Call
-    result = subtensor.blocks_until_next_epoch(netuid=netuid, tempo=tempo, block=block)
+    result = subtensor.blocks_until_next_epoch(netuid=netuid, block=block)
 
-    # Assert
-    spy_get_current_block.assert_not_called()
-    spy_tempo.assert_not_called()
-    assert result is not None
-    assert isinstance(result, int)
+    subtensor.get_next_epoch_start_block.assert_called_once_with(netuid, block=block)
+    assert result == 130
+
+
+def test_blocks_until_next_epoch_none_when_no_tempo(subtensor, mocker):
+    """Test blocks_until_next_epoch returns None when runtime API returns None."""
+    mocker.patch.object(subtensor, "get_next_epoch_start_block", return_value=None)
+
+    result = subtensor.blocks_until_next_epoch(netuid=1, block=20)
+    assert result is None
 
 
 def test_get_stake_info_for_coldkeys_none(subtensor, mocker):
@@ -5908,14 +6097,14 @@ def test_get_stake_info_for_coldkeys_success(subtensor, mocker):
     fake_coldkey_ss58s = ["coldkey1", "coldkey2"]
     fake_block = 123
 
-    fake_ck1 = b"\x16:\xech\r\xde,g\x03R1\xb9\x88q\xe79\xb8\x88\x93\xae\xd2)?*\rp\xb2\xe62\xads\x1c"
-    fake_ck2 = b"\x17:\xech\r\xde,g\x03R1\xb9\x88q\xe79\xb8\x88\x93\xae\xd2)?*\rp\xb2\xe62\xads\x1d"
-    fake_decoded_ck1 = "decoded_coldkey1"
-    fake_decoded_ck2 = "decoded_coldkey2"
+    fake_ck1 = "decoded_coldkey1"
+    fake_ck2 = "decoded_coldkey2"
+    fake_decoded_ck1 = fake_ck1
+    fake_decoded_ck2 = fake_ck2
 
     stake_info_dict_1 = {
         "netuid": 5,
-        "hotkey": b"\x16:\xech\r\xde,g\x03R1\xb9\x88q\xe79\xb8\x88\x93\xae\xd2)?*\rp\xb2\xe62\xads\x1c",
+        "hotkey": "fake_hk",
         "coldkey": fake_ck1,
         "stake": 1000,
         "locked": 0,
@@ -5925,7 +6114,7 @@ def test_get_stake_info_for_coldkeys_success(subtensor, mocker):
     }
     stake_info_dict_2 = {
         "netuid": 14,
-        "hotkey": b"\x17:\xech\r\xde,g\x03R1\xb9\x88q\xe79\xb8\x88\x93\xae\xd2)?*\rp\xb2\xe62\xads\x1d",
+        "hotkey": "fake_hk",
         "coldkey": fake_ck2,
         "stake": 2000,
         "locked": 0,
@@ -5941,12 +6130,6 @@ def test_get_stake_info_for_coldkeys_success(subtensor, mocker):
 
     mocked_query_runtime_api = mocker.patch.object(
         subtensor, "query_runtime_api", return_value=fake_query_result
-    )
-
-    mocked_decode_account_id = mocker.patch.object(
-        subtensor_module,
-        "decode_account_id",
-        side_effect=[fake_decoded_ck1, fake_decoded_ck2],
     )
 
     mock_stake_info_1 = mocker.Mock(spec=StakeInfo)
@@ -5973,9 +6156,6 @@ def test_get_stake_info_for_coldkeys_success(subtensor, mocker):
         params=[fake_coldkey_ss58s],
         block=fake_block,
     )
-    mocked_decode_account_id.assert_has_calls(
-        [mocker.call(fake_ck1), mocker.call(fake_ck2)]
-    )
     mocked_stake_info_list_from_dicts.assert_has_calls(
         [mocker.call([stake_info_dict_1]), mocker.call([stake_info_dict_2])]
     )
@@ -5986,13 +6166,15 @@ def test_get_mev_shield_current_key_success(subtensor, mocker):
     # Prep
     fake_block = 123
     fake_block_hash = "0x123abc"
-    fake_public_key_bytes = b"\x00" * 1184  # ML-KEM-768 public key size
+    fake_public_key_bytes = bytearray(b"\x00" * 1184)  # ML-KEM-768 public key size
 
     mocked_determine_block_hash = mocker.patch.object(
         subtensor, "determine_block_hash", return_value=fake_block_hash
     )
     mocked_query = mocker.patch.object(subtensor.substrate, "query")
-    mocked_query.return_value = iter([fake_public_key_bytes])
+    mocked_query.return_value = mocker.Mock(
+        spec=ScaleType, value_object=fake_public_key_bytes
+    )
 
     # Call
     result = subtensor.get_mev_shield_current_key(block=fake_block)
@@ -6016,7 +6198,11 @@ def test_get_mev_shield_current_key_none(subtensor, mocker):
     mocked_determine_block_hash = mocker.patch.object(
         subtensor, "determine_block_hash", return_value=fake_block_hash
     )
-    mocked_query = mocker.patch.object(subtensor.substrate, "query", return_value=None)
+    mocked_query = mocker.patch.object(
+        subtensor.substrate,
+        "query",
+        return_value=mocker.Mock(spec=ScaleType, value_object=None),
+    )
 
     # Call
     result = subtensor.get_mev_shield_current_key(block=fake_block)
@@ -6036,13 +6222,15 @@ def test_get_mev_shield_current_key_invalid_size(subtensor, mocker):
     # Prep
     fake_block = 123
     fake_block_hash = "0x123abc"
-    fake_public_key_bytes = b"\x00" * 1000  # Invalid size
+    fake_public_key_bytes = bytearray(b"\x00" * 1000)  # Invalid size
 
     mocked_determine_block_hash = mocker.patch.object(
         subtensor, "determine_block_hash", return_value=fake_block_hash
     )
     mocked_query = mocker.patch.object(subtensor.substrate, "query")
-    mocked_query.return_value = iter([fake_public_key_bytes])
+    mocked_query.return_value = mocker.Mock(
+        spec=ScaleType, value_object=fake_public_key_bytes
+    )
 
     # Call & Assert
     with pytest.raises(ValueError, match="Invalid ML-KEM-768 public key size"):
@@ -6062,13 +6250,15 @@ def test_get_mev_shield_next_key_success(subtensor, mocker):
     # Prep
     fake_block = 123
     fake_block_hash = "0x123abc"
-    fake_public_key_bytes = b"\x00" * 1184  # ML-KEM-768 public key size
+    fake_public_key_bytes = bytearray(b"\x00" * 1184)  # ML-KEM-768 public key size
 
     mocked_determine_block_hash = mocker.patch.object(
         subtensor, "determine_block_hash", return_value=fake_block_hash
     )
     mocked_query = mocker.patch.object(subtensor.substrate, "query")
-    mocked_query.return_value = iter([fake_public_key_bytes])
+    mocked_query.return_value = mocker.Mock(
+        spec=ScaleType, value_object=fake_public_key_bytes
+    )
 
     # Call
     result = subtensor.get_mev_shield_next_key(block=fake_block)
@@ -6092,7 +6282,11 @@ def test_get_mev_shield_next_key_none(subtensor, mocker):
     mocked_determine_block_hash = mocker.patch.object(
         subtensor, "determine_block_hash", return_value=fake_block_hash
     )
-    mocked_query = mocker.patch.object(subtensor.substrate, "query", return_value=None)
+    mocked_query = mocker.patch.object(
+        subtensor.substrate,
+        "query",
+        return_value=mocker.Mock(spec=ScaleType, value_object=None),
+    )
 
     # Call
     result = subtensor.get_mev_shield_next_key(block=fake_block)
@@ -6112,13 +6306,15 @@ def test_get_mev_shield_next_key_invalid_size(subtensor, mocker):
     # Prep
     fake_block = 123
     fake_block_hash = "0x123abc"
-    fake_public_key_bytes = b"\x00" * 1000  # Invalid size
+    fake_public_key_bytes = bytearray(b"\x00" * 1000)  # Invalid size
 
     mocked_determine_block_hash = mocker.patch.object(
         subtensor, "determine_block_hash", return_value=fake_block_hash
     )
     mocked_query = mocker.patch.object(subtensor.substrate, "query")
-    mocked_query.return_value = iter([fake_public_key_bytes])
+    mocked_query.return_value = mocker.Mock(
+        spec=ScaleType, value_object=fake_public_key_bytes
+    )
 
     # Call & Assert
     with pytest.raises(ValueError, match="Invalid ML-KEM-768 public key size"):
@@ -6131,234 +6327,6 @@ def test_get_mev_shield_next_key_invalid_size(subtensor, mocker):
         storage_function="NextKey",
         block_hash=fake_block_hash,
     )
-
-
-def test_get_mev_shield_submission_success(subtensor, mocker):
-    """Test get_mev_shield_submission returns correct submission when found."""
-    # Prep
-    fake_submission_id = "0x1234567890abcdef"
-    fake_block = 123
-    fake_block_hash = "0x123abc"
-    fake_author = b"\x01" * 32
-    fake_commitment = b"\x02" * 32
-    fake_ciphertext = b"\x03" * 100
-    fake_submitted_in = 100
-
-    fake_query_result = {
-        "author": [fake_author],
-        "commitment": [fake_commitment],
-        "ciphertext": [fake_ciphertext],
-        "submitted_in": fake_submitted_in,
-    }
-
-    mocked_determine_block_hash = mocker.patch.object(
-        subtensor, "determine_block_hash", return_value=fake_block_hash
-    )
-    mocked_query = mocker.patch.object(
-        subtensor.substrate, "query", return_value=fake_query_result
-    )
-    mocked_decode_account_id = mocker.patch.object(
-        subtensor_module,
-        "decode_account_id",
-        return_value="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-    )
-
-    # Call
-    result = subtensor.get_mev_shield_submission(
-        submission_id=fake_submission_id, block=fake_block
-    )
-
-    # Asserts
-    mocked_determine_block_hash.assert_called_once_with(block=fake_block)
-    mocked_query.assert_called_once_with(
-        module="MevShield",
-        storage_function="Submissions",
-        params=[bytes.fromhex("1234567890abcdef")],
-        block_hash=fake_block_hash,
-    )
-    mocked_decode_account_id.assert_called_once_with([fake_author])
-    assert result == {
-        "author": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-        "commitment": fake_commitment,
-        "ciphertext": fake_ciphertext,
-        "submitted_in": fake_submitted_in,
-    }
-
-
-def test_get_mev_shield_submission_without_0x_prefix(subtensor, mocker):
-    """Test get_mev_shield_submission handles submission_id without 0x prefix."""
-    # Prep
-    fake_submission_id = "1234567890abcdef"
-    fake_block = 123
-    fake_block_hash = "0x123abc"
-    fake_query_result = {
-        "author": [b"\x01" * 32],
-        "commitment": [b"\x02" * 32],
-        "ciphertext": [b"\x03" * 100],
-        "submitted_in": 100,
-    }
-
-    mocked_determine_block_hash = mocker.patch.object(
-        subtensor, "determine_block_hash", return_value=fake_block_hash
-    )
-    mocked_query = mocker.patch.object(
-        subtensor.substrate, "query", return_value=fake_query_result
-    )
-    mocked_decode_account_id = mocker.patch.object(
-        subtensor_module,
-        "decode_account_id",
-        return_value="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-    )
-
-    # Call
-    result = subtensor.get_mev_shield_submission(
-        submission_id=fake_submission_id, block=fake_block
-    )
-
-    # Asserts
-    mocked_determine_block_hash.assert_called_once_with(block=fake_block)
-    mocked_query.assert_called_once_with(
-        module="MevShield",
-        storage_function="Submissions",
-        params=[bytes.fromhex("1234567890abcdef")],
-        block_hash=fake_block_hash,
-    )
-    mocked_decode_account_id.assert_called_once_with([b"\x01" * 32])
-    assert result is not None
-
-
-def test_get_mev_shield_submission_none(subtensor, mocker):
-    """Test get_mev_shield_submission returns None when submission not found."""
-    # Prep
-    fake_submission_id = "0x1234567890abcdef"
-    fake_block = 123
-    fake_block_hash = "0x123abc"
-
-    mocked_determine_block_hash = mocker.patch.object(
-        subtensor, "determine_block_hash", return_value=fake_block_hash
-    )
-    mocked_query = mocker.patch.object(subtensor.substrate, "query", return_value=None)
-
-    # Call
-    result = subtensor.get_mev_shield_submission(
-        submission_id=fake_submission_id, block=fake_block
-    )
-
-    # Asserts
-    mocked_determine_block_hash.assert_called_once_with(block=fake_block)
-    mocked_query.assert_called_once_with(
-        module="MevShield",
-        storage_function="Submissions",
-        params=[bytes.fromhex("1234567890abcdef")],
-        block_hash=fake_block_hash,
-    )
-    assert result is None
-
-
-def test_get_mev_shield_submissions_success(subtensor, mocker):
-    """Test get_mev_shield_submissions returns all submissions when found."""
-    # Prep
-    fake_block = 123
-    fake_block_hash = "0x123abc"
-    fake_submission_id_1 = b"\x01" * 32
-    fake_submission_id_2 = b"\x02" * 32
-    fake_author_1 = b"\x03" * 32
-    fake_author_2 = b"\x04" * 32
-    fake_commitment_1 = b"\x05" * 32
-    fake_commitment_2 = b"\x06" * 32
-    fake_ciphertext_1 = b"\x07" * 100
-    fake_ciphertext_2 = b"\x08" * 100
-
-    fake_query_result = mocker.MagicMock()
-    fake_query_result.__iter__.return_value = iter(
-        [
-            (
-                [fake_submission_id_1],
-                mocker.MagicMock(
-                    value={
-                        "author": [fake_author_1],
-                        "commitment": [fake_commitment_1],
-                        "ciphertext": [fake_ciphertext_1],
-                        "submitted_in": 100,
-                    }
-                ),
-            ),
-            (
-                [fake_submission_id_2],
-                mocker.MagicMock(
-                    value={
-                        "author": [fake_author_2],
-                        "commitment": [fake_commitment_2],
-                        "ciphertext": [fake_ciphertext_2],
-                        "submitted_in": 101,
-                    }
-                ),
-            ),
-        ]
-    )
-
-    mocked_determine_block_hash = mocker.patch.object(
-        subtensor, "determine_block_hash", return_value=fake_block_hash
-    )
-    mocked_query_map = mocker.patch.object(
-        subtensor.substrate, "query_map", return_value=fake_query_result
-    )
-    mocked_decode_account_id = mocker.patch.object(
-        subtensor_module,
-        "decode_account_id",
-        side_effect=[
-            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-            "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
-        ],
-    )
-
-    # Call
-    result = subtensor.get_mev_shield_submissions(block=fake_block)
-
-    # Asserts
-    mocked_determine_block_hash.assert_called_once_with(block=fake_block)
-    mocked_query_map.assert_called_once_with(
-        module="MevShield",
-        storage_function="Submissions",
-        block_hash=fake_block_hash,
-    )
-    assert result is not None
-    assert len(result) == 2
-    assert "0x" + fake_submission_id_1.hex() in result
-    assert "0x" + fake_submission_id_2.hex() in result
-    assert result["0x" + fake_submission_id_1.hex()]["submitted_in"] == 100
-    assert result["0x" + fake_submission_id_2.hex()]["submitted_in"] == 101
-    # Verify decode_account_id was called for both submissions
-    assert mocked_decode_account_id.call_count == 2
-
-
-def test_get_mev_shield_submissions_none(subtensor, mocker):
-    """Test get_mev_shield_submissions returns None when no submissions found."""
-    # Prep
-    fake_block = 123
-    fake_block_hash = "0x123abc"
-
-    fake_query_result = mocker.MagicMock()
-    fake_query_result.__iter__.return_value = iter([])
-
-    mocked_determine_block_hash = mocker.patch.object(
-        subtensor, "determine_block_hash", return_value=fake_block_hash
-    )
-    mocked_query_map = mocker.patch.object(
-        subtensor.substrate, "query_map", return_value=fake_query_result
-    )
-
-    # Call
-    result = subtensor.get_mev_shield_submissions(block=fake_block)
-
-    # Asserts
-    mocked_determine_block_hash.assert_called_once_with(block=fake_block)
-    mocked_query_map.assert_called_once_with(
-        module="MevShield",
-        storage_function="Submissions",
-        block_hash=fake_block_hash,
-    )
-    assert result is None
 
 
 def test_mev_submit_encrypted_success(subtensor, fake_wallet, mocker):
@@ -6430,3 +6398,571 @@ def test_mev_submit_encrypted_default_params(subtensor, fake_wallet, mocker):
         blocks_for_revealed_execution=3,
     )
     assert result == mocked_submit_encrypted_extrinsic.return_value
+
+
+@pytest.mark.parametrize(
+    "fast_or_not, expected_result",
+    [
+        (250, True),
+        (12000, False),
+    ],
+)
+def test_is_fast_blocks(subtensor, mocker, fast_or_not, expected_result):
+    """Verifies that `is_fast_blocks` calls proper method with proper parameters."""
+    # Preps
+    return_obj = mocker.Mock(value=fast_or_not)
+    mocked_query_constant = mocker.patch.object(
+        subtensor, "query_constant", return_value=return_obj
+    )
+
+    # Call
+    result = subtensor.is_fast_blocks()
+
+    # Asserts
+    mocked_query_constant.assert_called_once()
+    assert result == expected_result
+
+
+def test_get_start_call_delay(subtensor, mocker):
+    """Verifies that `get_start_call_delay` calls proper method with proper parameters."""
+    # Preps
+    mocked_query_subtensor = mocker.patch.object(subtensor, "query_subtensor")
+
+    # Call
+    result = subtensor.get_start_call_delay()
+
+    # Asserts
+    mocked_query_subtensor.assert_called_once_with(name="StartCallDelay", block=None)
+    assert result == mocked_query_subtensor.return_value.value
+
+
+def test_get_coldkey_swap_announcement(subtensor, mocker):
+    """Test get_coldkey_swap_announcement returns correct data when announcement information is found."""
+    # Prep
+    fake_coldkey_ss58 = mocker.Mock(spec=str)
+
+    mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    mocked_query = mocker.patch.object(subtensor.substrate, "query")
+    mocked_from_query = mocker.patch.object(
+        subtensor_module.ColdkeySwapAnnouncementInfo, "from_query"
+    )
+
+    # Call
+    result = subtensor.get_coldkey_swap_announcement(coldkey_ss58=fake_coldkey_ss58)
+
+    # Asserts
+    mocked_determine_block_hash.assert_called_once_with(None)
+    mocked_query.assert_called_once_with(
+        module="SubtensorModule",
+        storage_function="ColdkeySwapAnnouncements",
+        params=[fake_coldkey_ss58],
+        block_hash=mocked_determine_block_hash.return_value,
+    )
+    mocked_from_query.assert_called_once_with(
+        coldkey_ss58=fake_coldkey_ss58, query=mocked_query.return_value
+    )
+    assert result == mocked_from_query.return_value
+
+
+def test_get_coldkey_swap_announcements(subtensor, mocker):
+    """Test get_coldkey_swap_announcements returns correct data when announcement information is found."""
+    # Prep
+    fake_record = mocker.Mock()
+    mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    mocked_query_map = mocker.patch.object(
+        subtensor.substrate, "query_map", return_value=(fake_record,)
+    )
+    mocked_from_record = mocker.patch.object(
+        subtensor_module.ColdkeySwapAnnouncementInfo, "from_record"
+    )
+
+    # Call
+    result = subtensor.get_coldkey_swap_announcements()
+
+    # Asserts
+    mocked_determine_block_hash.assert_called_once_with(None)
+    mocked_query_map.assert_called_once_with(
+        module="SubtensorModule",
+        storage_function="ColdkeySwapAnnouncements",
+        block_hash=mocked_determine_block_hash.return_value,
+    )
+    mocked_from_record.assert_called_once_with(fake_record)
+    assert result == [mocked_from_record.return_value]
+
+
+def test_get_coldkey_swap_announcement_delay(subtensor, mocker):
+    """Test get_coldkey_swap_announcement_delay returns correct value when found."""
+    # Prep
+    mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    mocked_query = mocker.patch.object(subtensor.substrate, "query")
+
+    # Call
+    result = subtensor.get_coldkey_swap_announcement_delay()
+
+    # Asserts
+    mocked_determine_block_hash.assert_called_once_with(None)
+    mocked_query.assert_called_once_with(
+        module="SubtensorModule",
+        storage_function="ColdkeySwapAnnouncementDelay",
+        block_hash=mocked_determine_block_hash.return_value,
+    )
+    assert result == mocked_query.return_value.value
+
+
+def test_get_coldkey_swap_reannouncement_delay(subtensor, mocker):
+    """Test get_coldkey_swap_reannouncement_delay returns correct value when found."""
+    # Prep
+    mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    mocked_query = mocker.patch.object(subtensor.substrate, "query")
+
+    # Call
+    result = subtensor.get_coldkey_swap_reannouncement_delay()
+
+    # Asserts
+    mocked_determine_block_hash.assert_called_once_with(None)
+    mocked_query.assert_called_once_with(
+        module="SubtensorModule",
+        storage_function="ColdkeySwapReannouncementDelay",
+        block_hash=mocked_determine_block_hash.return_value,
+    )
+    assert result == mocked_query.return_value.value
+
+
+def test_get_coldkey_swap_constants(subtensor, mocker):
+    """Test get_coldkey_swap_constants returns correct data when constants are found."""
+    # Prep
+    fake_name = mocker.Mock(spec=str)
+    fake_value = mocker.Mock(value=mocker.Mock(spec=int))
+    mocked_constants_names = mocker.patch.object(
+        subtensor_module.ColdkeySwapConstants,
+        "constants_names",
+        return_value=[fake_name],
+    )
+    mocked_query_constant = mocker.patch.object(
+        subtensor,
+        "query_constant",
+        side_effect=[fake_value],
+    )
+    mocked_from_dict = mocker.patch.object(
+        subtensor_module.ColdkeySwapConstants, "from_dict"
+    )
+
+    # Call
+    result = subtensor.get_coldkey_swap_constants()
+
+    # Asserts
+    mocked_constants_names.assert_called_once()
+    mocked_query_constant.assert_called_once_with(
+        module_name="SubtensorModule",
+        constant_name=fake_name,
+        block=None,
+    )
+    mocked_from_dict.assert_called_once_with({fake_name: fake_value.value})
+    assert result == mocked_from_dict.return_value
+
+
+def test_announce_coldkey_swap(mocker, subtensor):
+    """Tests `announce_coldkey_swap` extrinsic call method."""
+    # preps
+    wallet = mocker.Mock(spec=Wallet)
+    new_coldkey_ss58 = mocker.Mock(spec=str)
+    mocked_announce_coldkey_swap_extrinsic = mocker.patch.object(
+        subtensor_module, "announce_coldkey_swap_extrinsic"
+    )
+
+    # call
+    response = subtensor.announce_coldkey_swap(
+        wallet=wallet,
+        new_coldkey_ss58=new_coldkey_ss58,
+    )
+
+    # asserts
+    mocked_announce_coldkey_swap_extrinsic.assert_called_once_with(
+        subtensor=subtensor,
+        wallet=wallet,
+        new_coldkey_ss58=new_coldkey_ss58,
+        mev_protection=DEFAULT_MEV_PROTECTION,
+        period=DEFAULT_PERIOD,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        wait_for_revealed_execution=True,
+    )
+    assert response == mocked_announce_coldkey_swap_extrinsic.return_value
+
+
+def test_swap_coldkey_announced(mocker, subtensor):
+    """Tests `swap_coldkey_announced` extrinsic call method."""
+    # preps
+    wallet = mocker.Mock(spec=Wallet)
+    new_coldkey_ss58 = mocker.Mock(spec=str)
+    mocked_swap_coldkey_announced_extrinsic = mocker.patch.object(
+        subtensor_module, "swap_coldkey_announced_extrinsic"
+    )
+
+    # call
+    response = subtensor.swap_coldkey_announced(
+        wallet=wallet,
+        new_coldkey_ss58=new_coldkey_ss58,
+    )
+
+    # asserts
+    mocked_swap_coldkey_announced_extrinsic.assert_called_once_with(
+        subtensor=subtensor,
+        wallet=wallet,
+        new_coldkey_ss58=new_coldkey_ss58,
+        mev_protection=DEFAULT_MEV_PROTECTION,
+        period=DEFAULT_PERIOD,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        wait_for_revealed_execution=True,
+    )
+    assert response == mocked_swap_coldkey_announced_extrinsic.return_value
+
+
+def test_get_coldkey_swap_dispute(subtensor, mocker):
+    """Test get_coldkey_swap_dispute returns correct data when dispute information is found."""
+    fake_coldkey_ss58 = mocker.Mock(spec=str)
+    mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    mocked_query = mocker.patch.object(subtensor.substrate, "query")
+    mocked_from_query = mocker.patch.object(
+        subtensor_module.ColdkeySwapDisputeInfo, "from_query"
+    )
+
+    result = subtensor.get_coldkey_swap_dispute(coldkey_ss58=fake_coldkey_ss58)
+
+    mocked_determine_block_hash.assert_called_once_with(None)
+    mocked_query.assert_called_once_with(
+        module="SubtensorModule",
+        storage_function="ColdkeySwapDisputes",
+        params=[fake_coldkey_ss58],
+        block_hash=mocked_determine_block_hash.return_value,
+    )
+    mocked_from_query.assert_called_once_with(
+        coldkey_ss58=fake_coldkey_ss58, query=mocked_query.return_value
+    )
+    assert result == mocked_from_query.return_value
+
+
+def test_get_coldkey_swap_disputes(subtensor, mocker):
+    """Test get_coldkey_swap_disputes returns correct data when dispute information is found."""
+    fake_record = mocker.Mock()
+    mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    mocked_query_map = mocker.patch.object(
+        subtensor.substrate, "query_map", return_value=(fake_record,)
+    )
+    mocked_from_record = mocker.patch.object(
+        subtensor_module.ColdkeySwapDisputeInfo, "from_record"
+    )
+
+    result = subtensor.get_coldkey_swap_disputes()
+
+    mocked_determine_block_hash.assert_called_once_with(None)
+    mocked_query_map.assert_called_once_with(
+        module="SubtensorModule",
+        storage_function="ColdkeySwapDisputes",
+        block_hash=mocked_determine_block_hash.return_value,
+    )
+    mocked_from_record.assert_called_once_with(fake_record)
+    assert result == [mocked_from_record.return_value]
+
+
+def test_dispute_coldkey_swap(mocker, subtensor):
+    """Tests `dispute_coldkey_swap` extrinsic call method."""
+    wallet = mocker.Mock(spec=Wallet)
+    mocked_dispute_coldkey_swap_extrinsic = mocker.patch.object(
+        subtensor_module, "dispute_coldkey_swap_extrinsic"
+    )
+
+    response = subtensor.dispute_coldkey_swap(wallet=wallet)
+
+    mocked_dispute_coldkey_swap_extrinsic.assert_called_once_with(
+        subtensor=subtensor,
+        wallet=wallet,
+        mev_protection=DEFAULT_MEV_PROTECTION,
+        period=DEFAULT_PERIOD,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        wait_for_revealed_execution=True,
+    )
+    assert response == mocked_dispute_coldkey_swap_extrinsic.return_value
+
+
+def test_register_success(subtensor, fake_wallet, mocker):
+    """Tests register with auto-calculated limit_price from recycle."""
+    # Preps
+    fake_netuid = 1
+
+    mocked_register_limit_extrinsic = mocker.patch.object(
+        subtensor_module, "register_limit_extrinsic"
+    )
+    mocker.patch.object(
+        subtensor, "recycle", return_value=Balance.from_rao(1_000_000_000)
+    )
+
+    # Call
+    result = subtensor.register(wallet=fake_wallet, netuid=fake_netuid)
+
+    # Asserts
+    mocked_register_limit_extrinsic.assert_called_once_with(
+        subtensor=subtensor,
+        wallet=fake_wallet,
+        netuid=1,
+        limit_price=Balance.from_rao(1_005_000_000),
+        mev_protection=DEFAULT_MEV_PROTECTION,
+        period=DEFAULT_PERIOD,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        wait_for_revealed_execution=True,
+    )
+    assert result == mocked_register_limit_extrinsic.return_value
+
+
+def test_register_on_root(mock_substrate, subtensor, fake_wallet, mocker):
+    mock_substrate.submit_extrinsic.return_value = MagicMock(
+        is_success=True,
+    )
+    mocked_root_register_extrinsic = mocker.patch.object(
+        subtensor_module,
+        "root_register_extrinsic",
+    )
+
+    response = subtensor.register(
+        wallet=fake_wallet,
+        netuid=0,
+    )
+
+    assert response == mocked_root_register_extrinsic.return_value
+
+
+def test_get_last_epoch_block(subtensor, mocker):
+    """Verify that `get_last_epoch_block` queries LastEpochBlock storage."""
+    # Preps
+    netuid = 7
+    mocked_query = mocker.patch.object(subtensor, "query_subtensor")
+
+    # Call
+    result = subtensor.get_last_epoch_block(netuid=netuid)
+
+    # Asserts
+    mocked_query.assert_called_once_with(
+        name="LastEpochBlock", block=None, params=[netuid]
+    )
+    assert result == mocked_query.return_value.value
+
+
+def test_get_pending_epoch_at(subtensor, mocker):
+    """Verify that `get_pending_epoch_at` queries PendingEpochAt storage."""
+    # Preps
+    netuid = 7
+    mocked_query = mocker.patch.object(subtensor, "query_subtensor")
+
+    # Call
+    result = subtensor.get_pending_epoch_at(netuid=netuid)
+
+    # Asserts
+    mocked_query.assert_called_once_with(
+        name="PendingEpochAt", block=None, params=[netuid]
+    )
+    assert result == mocked_query.return_value.value
+
+
+def test_get_subnet_epoch_index(subtensor, mocker):
+    """Verify that `get_subnet_epoch_index` queries SubnetEpochIndex storage."""
+    # Preps
+    netuid = 7
+    mocked_query = mocker.patch.object(subtensor, "query_subtensor")
+
+    # Call
+    result = subtensor.get_subnet_epoch_index(netuid=netuid)
+
+    # Asserts
+    mocked_query.assert_called_once_with(
+        name="SubnetEpochIndex", block=None, params=[netuid]
+    )
+    assert result == mocked_query.return_value.value
+
+
+def test_get_activity_cutoff_factor_milli(subtensor, mocker):
+    """Verify that `get_activity_cutoff_factor_milli` queries ActivityCutoffFactorMilli storage."""
+    # Preps
+    netuid = 7
+    mocked_query = mocker.patch.object(subtensor, "query_subtensor")
+
+    # Call
+    result = subtensor.get_activity_cutoff_factor_milli(netuid=netuid)
+
+    # Asserts
+    mocked_query.assert_called_once_with(
+        name="ActivityCutoffFactorMilli", block=None, params=[netuid]
+    )
+    assert result == mocked_query.return_value.value
+
+
+def test_get_owner_hyperparam_rate_limit(subtensor, mocker):
+    """Verify that `get_owner_hyperparam_rate_limit` queries OwnerHyperparamRateLimit storage."""
+    # Preps
+    mocked_determine_block_hash = mocker.patch.object(subtensor, "determine_block_hash")
+    mocked_query = mocker.patch.object(subtensor.substrate, "query")
+
+    # Call
+    result = subtensor.get_owner_hyperparam_rate_limit()
+
+    # Asserts
+    mocked_query.assert_called_once_with(
+        module="SubtensorModule",
+        storage_function="OwnerHyperparamRateLimit",
+        block_hash=mocked_determine_block_hash.return_value,
+    )
+    assert result == mocked_query.return_value.value
+
+
+def test_get_epoch_schedule_state(subtensor, mocker):
+    """Verify that `get_epoch_schedule_state` composes sub-queries into EpochScheduleState."""
+    # Preps
+    netuid = 7
+    fake_block = 500
+    mocker.patch.object(
+        type(subtensor),
+        "block",
+        new_callable=mocker.PropertyMock,
+        return_value=fake_block,
+    )
+    mocker.patch.object(subtensor, "get_last_epoch_block", return_value=100)
+    mocker.patch.object(subtensor, "get_pending_epoch_at", return_value=0)
+    mocker.patch.object(subtensor, "get_subnet_epoch_index", return_value=42)
+    mocker.patch.object(subtensor, "tempo", return_value=360)
+    mocker.patch.object(subtensor, "blocks_since_last_step", return_value=50)
+
+    # Call
+    result = subtensor.get_epoch_schedule_state(netuid=netuid)
+
+    # Asserts
+    subtensor.get_last_epoch_block.assert_called_once_with(netuid, block=fake_block)
+    subtensor.get_pending_epoch_at.assert_called_once_with(netuid, block=fake_block)
+    subtensor.get_subnet_epoch_index.assert_called_once_with(netuid, block=fake_block)
+    subtensor.tempo.assert_called_once_with(netuid, block=fake_block)
+    subtensor.blocks_since_last_step.assert_called_once_with(netuid, block=fake_block)
+    assert result.last_epoch_block == 100
+    assert result.pending_epoch_at == 0
+    assert result.subnet_epoch_index == 42
+    assert result.tempo == 360
+    assert result.blocks_since_last_step == 50
+    assert result.current_block == fake_block
+
+
+def test_set_tempo(subtensor, fake_wallet, mocker):
+    """Verify that `set_tempo` delegates to set_tempo_extrinsic with correct parameters."""
+    # Preps
+    mocked_extrinsic = mocker.patch.object(subtensor_module, "set_tempo_extrinsic")
+
+    # Call
+    result = subtensor.set_tempo(
+        wallet=fake_wallet,
+        netuid=7,
+        tempo=500,
+    )
+
+    # Asserts
+    mocked_extrinsic.assert_called_once_with(
+        subtensor=subtensor,
+        wallet=fake_wallet,
+        netuid=7,
+        tempo=500,
+        mev_protection=DEFAULT_MEV_PROTECTION,
+        period=DEFAULT_PERIOD,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        wait_for_revealed_execution=True,
+    )
+    assert result == mocked_extrinsic.return_value
+
+
+def test_set_activity_cutoff_factor(subtensor, fake_wallet, mocker):
+    """Verify that `set_activity_cutoff_factor` delegates to set_activity_cutoff_factor_extrinsic."""
+    # Preps
+    mocked_extrinsic = mocker.patch.object(
+        subtensor_module, "set_activity_cutoff_factor_extrinsic"
+    )
+
+    # Call
+    result = subtensor.set_activity_cutoff_factor(
+        wallet=fake_wallet,
+        netuid=7,
+        factor_milli=5000,
+    )
+
+    # Asserts
+    mocked_extrinsic.assert_called_once_with(
+        subtensor=subtensor,
+        wallet=fake_wallet,
+        netuid=7,
+        factor_milli=5000,
+        mev_protection=DEFAULT_MEV_PROTECTION,
+        period=DEFAULT_PERIOD,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        wait_for_revealed_execution=True,
+    )
+    assert result == mocked_extrinsic.return_value
+
+
+def test_root_set_activity_cutoff_factor(subtensor, fake_wallet, mocker):
+    """Verify that `root_set_activity_cutoff_factor` delegates to root_set_activity_cutoff_factor_extrinsic."""
+    # Preps
+    mocked_extrinsic = mocker.patch.object(
+        subtensor_module, "root_set_activity_cutoff_factor_extrinsic"
+    )
+
+    # Call
+    result = subtensor.root_set_activity_cutoff_factor(
+        wallet=fake_wallet,
+        netuid=7,
+        factor_milli=5000,
+    )
+
+    # Asserts
+    mocked_extrinsic.assert_called_once_with(
+        subtensor=subtensor,
+        wallet=fake_wallet,
+        netuid=7,
+        factor_milli=5000,
+        mev_protection=DEFAULT_MEV_PROTECTION,
+        period=DEFAULT_PERIOD,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        wait_for_revealed_execution=True,
+    )
+    assert result == mocked_extrinsic.return_value
+
+
+def test_trigger_epoch(subtensor, fake_wallet, mocker):
+    """Verify that `trigger_epoch` delegates to trigger_epoch_extrinsic."""
+    # Preps
+    mocked_extrinsic = mocker.patch.object(subtensor_module, "trigger_epoch_extrinsic")
+
+    # Call
+    result = subtensor.trigger_epoch(
+        wallet=fake_wallet,
+        netuid=7,
+    )
+
+    # Asserts
+    mocked_extrinsic.assert_called_once_with(
+        subtensor=subtensor,
+        wallet=fake_wallet,
+        netuid=7,
+        mev_protection=DEFAULT_MEV_PROTECTION,
+        period=DEFAULT_PERIOD,
+        raise_error=False,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+        wait_for_revealed_execution=True,
+    )
+    assert result == mocked_extrinsic.return_value
